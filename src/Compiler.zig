@@ -59,3 +59,11 @@ pub fn createNode(self: *Compiler, ast_node: Parser.AstNode, span_start: usize, 
     try self.span_end.append(span_end);
     return try self.pushNode(ast_node);
 }
+
+pub fn numAstNodes(self: *Compiler) usize {
+    return self.ast_node.items.len;
+}
+
+pub fn getSource(self: *Compiler, node_id: Parser.NodeId) []const u8 {
+    return self.source[self.span_start.items[node_id]..self.span_end.items[node_id]];
+}

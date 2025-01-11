@@ -424,7 +424,7 @@ pub fn isExpectedToken(self: *Parser, expected: TokenType) bool {
 pub fn isKeyword(self: *Parser, keyword: []const u8) bool {
     if (self.peek()) |token| {
         if (token.token_type == TokenType.Name) {
-            return self.compiler.source[token.span_start..token.span_end] == keyword;
+            return std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], keyword);
         }
     }
     return false;
@@ -506,16 +506,16 @@ pub fn createNode(self: *Parser, ast_node: AstNode, span_start: usize, span_end:
     try self.compiler.createNode(ast_node, span_start, span_end);
 }
 
-pub fn parse(self: *Parser) Compiler {
-    self.program();
+pub fn parse(self: *Parser) !Compiler {
+    _ = try self.program();
     return self.compiler;
 }
 
-pub fn program(self: *Parser) NodeId {
-    return self.block(false);
+pub fn program(self: *Parser) !NodeId {
+    return try self.block(false);
 }
 
-pub fn block(self: *Parser, expect_curly_braces: bool) NodeId {
+pub fn block(self: *Parser, expect_curly_braces: bool) !NodeId {
     const span_start = self.position();
     var span_end = self.position();
 
@@ -524,7 +524,414 @@ pub fn block(self: *Parser, expect_curly_braces: bool) NodeId {
         self.isExpectedToken(TokenType.LCurly);
     }
 
-    while (self.position() < self.currentFileEnd()) {}
+    while (self.position() < self.currentFileEnd()) {
+        if (self.isExpectedToken(TokenType.RCurly) and expect_curly_braces) {
+            span_end = self.position() + 1;
+            self.rcurly();
+            break;
+        } else if (self.isExpectedToken(TokenType.Semicolon or self.isExpectedToken(TokenType.Newline))) {
+            _ = self.next();
+            continue;
+        } else if (self.isKeyword("fun")) {
+            try curr_body.append(try self.funDefinition());
+        } else if (self.isKeyword("extern")) {
+            // TODO
+        } else if (self.isKeyword("struct")) {
+            // TODO
+        } else if (self.isKeyword("class")) {
+            // TODO
+        } else if (self.isKeyword("enub")) {
+            // TODO
+        } else if (self.is_symbol("use")) {
+            // TODO
+        } else if (self.isKeyword("let")) {
+            // TODO
+        } else if (self.isKeyword("mut")) {
+            // TODO
+        } else if (self.isKeyword("while")) {
+            // TODO
+        } else if (self.isKeyword("for")) {
+            // TODO
+        } else if (self.isKeyword("return")) {
+            // TODO
+        } else if (self.isKeyword("break")) {
+            // TODO
+        } else if (self.isKeyword("defer")) {
+            // TODO
+        } else if (self.isKeyword("resize")) {
+            // TODO
+        } else if (self.isKeyword("unsafe")) {
+            // TODO
+        } else {
+            // TODO
+        }
+    }
+
+    try self.compiler.blocks.append(Block.new(curr_body));
+
+    return try self.createNode(
+        .{ .block = self.compiler.blocks.items.len - 1 },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn funDefinition(self: *Parser) !NodeId {
+    const span_start = self.position();
+    _ = self.isKeyword("fun");
+
+    const _name = try self.name();
+
+    var type_params = null;
+    if (self.isExpectedToken(TokenType.LessThan)) {
+        type_params = try self.typeParams();
+    }
+
+    const _params = try self.params();
+
+    var lifetime_annotations = std.ArrayList(NodeId).init(self.alloc);
+
+    if (self.isExpectedToken(TokenType.LSquare)) {
+        // we have lifetime constraints/annotations
+        self.lsquare();
+
+        while (true) {
+            if (self.isExpectedToken(TokenType.RSquare)) {
+                self.rsquare();
+                break;
+            } else if (self.isExpectedToken(TokenType.Newline)) {
+                self.newLine();
+            } else if (self.isExpectedToken(TokenType.Comma)) {
+                self.next();
+            } else if (self.isExpectedToken(TokenType.Name)) {
+                // TODO
+                _ = &lifetime_annotations;
+            } else {
+                self.@"error"("expected: lifetime annotation");
+                break;
+            }
+        }
+    }
+
+    const return_ty: ?NodeId = null;
+    if (self.isExpectedToken(TokenType.ThinArrow)) {
+        self.next();
+        try self.type();
+    }
+
+    const initial_node_id: ?NodeId = self.compiler.numAstNodes();
+
+    var _block: ?NodeId = null;
+    var span_end: usize = undefined;
+    if (self.isExpectedToken(TokenType.LCurly)) {
+        _block = try self.block(true);
+        span_end = self.getSpanEnd(block.?);
+    } else {
+        span_end = self.position();
+    }
+
+    return try self.createNode(
+        .{
+            .fun = AstNode.fun{
+                .name = _name,
+                .type_params = type_params,
+                .params = _params,
+                .lifetime_annotations = lifetime_annotations,
+                .return_ty = return_ty,
+                .initial_node_id = initial_node_id,
+                .block = _block,
+                .is_extern = false,
+            },
+        },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn typeParams(self: *Parser) !NodeId {
+    const span_start = self.position();
+    const span_end: usize = undefined;
+
+    var _params = std.ArrayList(NodeId).init(self.alloc);
+    self.lessThan();
+
+    while (self.hasTokens()) {
+        if (self.isExpectedToken(TokenType.GreaterThan)) {
+            break;
+        }
+        try _params.append(try self.name());
+        if (self.isExpectedToken(TokenType.Comma)) {
+            _ = self.next();
+        }
+    }
+
+    span_end = self.position() + 1;
+    self.greaterThan();
+
+    return try self.createNode(
+        .{ .params = _params },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn params(self: *Parser) !NodeId {
+    const span_start = self.position();
+    const span_end: usize = undefined;
+
+    var param_list = std.ArrayList(NodeId).init(self.alloc);
+    self.lparen();
+    param_list = try self.paramList();
+    span_end = self.position() + 1;
+    self.rparen();
+
+    return try self.createNode(
+        .{ .params = param_list },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn paramList(self: *Parser) !std.ArrayList(NodeId) {
+    var _params = std.ArrayList(NodeId).init(self.alloc);
+    while (self.hasTokens()) {
+        if (self.isExpectedToken(TokenType.RParen) or self.isExpectedToken(TokenType.RSquare) or self.isExpectedToken(TokenType.Pipe)) {
+            break;
+        }
+
+        if (self.isExpectedToken(TokenType.Comma)) {
+            _ = self.next();
+            continue;
+        }
+
+        // Parse param
+        const span_start = self.position();
+
+        var is_mutable = false;
+        if (self.isKeyword("mut")) {
+            is_mutable = true;
+            _ = self.next();
+        }
+
+        const _name = self.name();
+        if (self.isExpectedToken(TokenType.Colon)) {
+            self.colon();
+
+            const ty = try self.typeName();
+
+            const span_end = self.getSpanEnd(ty);
+
+            try _params.append(
+                self.createNode(
+                    .{ .param = AstNode.param{ .name = name, .ty = ty, .is_mutable = is_mutable } },
+                    span_start,
+                    span_end,
+                ),
+            );
+        } else {
+            const name_contents = self.compiler.getSource(_name);
+
+            if (std.mem.eql(u8, name_contents, "self")) {
+                const span_end = self.getSpanEnd(_name);
+
+                const ty = try self.createNode(
+                    AstNode.type{
+                        .name = _name,
+                        .params = null,
+                        .optional = false,
+                        .pointer_type = PointerType.Unknown,
+                    },
+                    span_start,
+                    span_end,
+                );
+
+                try _params.append(
+                    try self.createNode(
+                        .{ .param = AstNode.param{ .name = _name, .ty = ty, .is_mutable = is_mutable } },
+                        span_start,
+                        span_end,
+                    ),
+                );
+            } else {
+                try _params.append(try self.@"error"("parameter missing type"));
+            }
+        }
+    }
+
+    return _params;
+}
+
+pub fn typeName(self: *Parser) !NodeId {
+    if (self.isKeyword("raw")) {
+        // TODO
+    }
+
+    var pointer_type = PointerType.Unknown;
+    if (self.isKeyword("owned")) {
+        _ = self.next();
+        pointer_type = PointerType.Owned;
+    }
+
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.Name) {
+            if (std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "fun")) {
+                // TODO
+                unreachable;
+            }
+
+            const _name = try self.name();
+            var _params: ?NodeId = null;
+            if (self.isExpectedToken(TokenType.LessThan)) {
+                // We have generics
+                _params = try self.typeParams();
+            }
+
+            var optional = false;
+            if (self.isExpectedToken(TokenType.QuestionMark)) {
+                _ = self.next();
+                optional = true;
+            }
+
+            return try self.createNode(
+                .{ .type = AstNode.type{ .name = _name, .params = _params, .optional = optional, .pointer_type = pointer_type } },
+                token.span_start,
+                token.span_end,
+            );
+        }
+    } else {
+        return try self.@"error"("expect name");
+    }
+}
+
+pub fn name(self: *Parser) !NodeId {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.Name) {
+            _ = self.next();
+            return try self.createNode(AstNode.name{ .name = token.token_type }, token.span_start, token.span_end);
+        } else {
+            return try self.@"error"("expected: name");
+        }
+    }
+}
+
+pub fn lcurly(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.LCurly) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: left curly bracket '{'");
+        }
+    }
+}
+
+pub fn rcurly(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.RCurly) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: right bracket '}'");
+        }
+    }
+}
+
+pub fn lsquare(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.LSquare) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: left square bracket '['");
+        }
+    }
+}
+
+pub fn rsquare(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.RSquare) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: right square bracket ']'");
+        }
+    }
+}
+
+pub fn lparen(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.LParen) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: left parenthesis '('");
+        }
+    }
+}
+
+pub fn rparen(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.RParen) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: right parenthesis ')'");
+        }
+    }
+}
+
+pub fn lessThan(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.LessThan) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: less than '<'");
+        }
+    }
+}
+
+pub fn greaterThan(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.GreaterThan) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: greater than '>'");
+        }
+    }
+}
+
+pub fn equals(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.Equals) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: equals '='");
+        }
+    }
+}
+
+pub fn thinArrow(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.ThinArrow) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: thin arrow '->'");
+        }
+    }
+}
+
+pub fn colon(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.Colon) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: colon ':'");
+        }
+    }
+}
+
+pub fn comma(self: *Parser) void {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.Comma) {
+            _ = self.next();
+        } else {
+            self.@"error"("expected: comma ','");
+        }
+    }
 }
 
 pub fn lexQuotedString(self: *Parser) ?Token {
