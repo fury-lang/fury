@@ -545,7 +545,7 @@ pub fn block(self: *Parser, expect_curly_braces: bool) !NodeId {
         } else if (self.is_symbol("use")) {
             // TODO
         } else if (self.isKeyword("let")) {
-            // TODO
+            try curr_body.append(try self.letStatement());
         } else if (self.isKeyword("mut")) {
             // TODO
         } else if (self.isKeyword("while")) {
@@ -932,6 +932,7 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) !NodeId {
 
 pub fn simpleExpression(self: *Parser) !NodeId {
     const span_start = self.position();
+    _ = span_start;
 
     var expr: NodeId = undefined;
     if (self.isExpectedToken(TokenType.LCurly)) {
@@ -946,7 +947,7 @@ pub fn simpleExpression(self: *Parser) !NodeId {
     } else if (self.isKeyword("true") or self.isKeyword("false")) {
         expr = try self.boolean();
     } else if (self.isKeyword("none")) {
-        // TODO
+        expr = try self.none();
     } else if (self.isKeyword("new") or self.isKeyword("local")) {
         // TODO
     } else if (self.isExpectedToken(TokenType.String)) {
@@ -958,7 +959,7 @@ pub fn simpleExpression(self: *Parser) !NodeId {
     } else if (self.isExpectedToken(TokenType.Int) or self.isExpectedToken(TokenType.Float) or self.isExpectedToken(TokenType.Minus)) {
         expr = try self.number();
     } else if (self.isExpectedToken(TokenType.Name)) {
-        // TODO
+        expr = try self.variableOrCall();
     } else if (self.isExpectedToken(TokenType.Dot)) {
         // TODO
     } else {
@@ -977,6 +978,99 @@ pub fn simpleExpression(self: *Parser) !NodeId {
         } else {
             return expr;
         }
+    }
+}
+
+pub fn letStatement(self: *Parser) !NodeId {
+    const is_mutable = false;
+    const span_start = self.position();
+
+    _ = self.isKeyword("let");
+
+    const variable_name = try self.variable();
+
+    var ty: ?NodeId = null;
+    if (self.isExpectedToken(TokenType.Colon)) {
+        self.colon();
+        ty = try self.typeName();
+    }
+
+    self.equals();
+
+    const initializer = try self.expression();
+
+    const span_end = self.getSpanEnd(initializer);
+
+    return try self.createNode(
+        .{ .let = AstNode.let{ .variable_name = variable_name, .ty = ty, .initializer = initializer, .is_mutable = is_mutable } },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn variable(self: *Parser) !NodeId {
+    if (self.isExpectedToken(TokenType.Name)) {
+        const _name = self.next().?;
+        const name_start = _name.span_start;
+        const name_end = _name.span_end;
+        return try self.createNode(AstNode.name, name_start, name_end);
+    } else {
+        return try self.@"error"("expected: variable");
+    }
+}
+
+pub fn variableOrCall(self: *Parser) !NodeId {
+    if (self.isExpectedToken(TokenType.Name)) {
+        const span_start = self.position();
+
+        const _name = self.next().?;
+        const name_start = _name.span_start;
+        const name_end = _name.span_end;
+
+        if (self.isExpectedToken(TokenType.LParen)) {
+            var head = try self.createNode(AstNode.name, name_start, name_end);
+            if (self.isExpectedToken(TokenType.LParen)) {
+                // We're a call
+                self.lparen();
+                var args = std.ArrayList(NodeId).init(self.alloc);
+                while (true) {
+                    if (self.isExpression()) {
+                        const value_start = self.position();
+                        const val = try self.expression();
+
+                        if (self.isExpectedToken(TokenType.Comma)) {
+                            try args.append(val);
+                            self.comma();
+                            continue;
+                        } else if (self.isExpectedToken(TokenType.RParen)) {
+                            try args.append(val);
+                            self.rparen();
+                            break;
+                        } else if (self.isExpectedToken(TokenType.Colon)) {
+                            // we have a name value
+                            // TODO
+                            _ = value_start;
+                        } else {
+                            try args.append(val);
+                            try args.append(try self.@"error"("unexpected value in call arguments"));
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                const span_end = self.position() + 1;
+                self.rparen();
+                head = try self.createNode(AstNode.name, span_start, span_end);
+            }
+
+            return head;
+        } else {
+            // We're a variable
+            return try self.createNode(AstNode.name, name_start, name_end);
+        }
+    } else {
+        return try self.@"error"("expected: variable or call");
     }
 }
 
