@@ -1,5 +1,6 @@
 const std = @import("std");
 const Compiler = @import("Compiler.zig");
+const Errors = @import("Errors.zig");
 
 // How parser works?
 
@@ -461,6 +462,48 @@ pub fn isSimpleExpression(self: *Parser) bool {
         }
     }
     return false;
+}
+
+pub fn errorOnNode(self: *Parser, message: []const u8, node_id: NodeId) !void {
+    try self.compiler.errors.append(
+        Errors.SourceError{
+            .message = message,
+            .node_id = node_id,
+            .severity = Errors.Severity.Error,
+        },
+    );
+}
+
+pub fn @"error"(self: *Parser, message: []const u8) !NodeId {
+    if (self.next()) |token| {
+        const garbage = AstNode{ .garbage = null };
+        const node_id = try self.createNode(garbage, token.span_start, token.span_end);
+        try self.compiler.errors.append(
+            Errors.SourceError{
+                .message = message,
+                .node_id = node_id,
+                .severity = Errors.Severity.Error,
+            },
+        );
+
+        return node_id;
+    } else {
+        const garbage = AstNode{ .garbage = null };
+        const node_id = try self.createNode(garbage, self.content_length, self.content_length);
+        try self.compiler.errors.append(
+            Errors.SourceError{
+                .message = message,
+                .node_id = node_id,
+                .severity = Errors.Severity.Error,
+            },
+        );
+
+        return node_id;
+    }
+}
+
+pub fn createNode(self: *Parser, ast_node: AstNode, span_start: usize, span_end: usize) !NodeId {
+    try self.compiler.createNode(ast_node, span_start, span_end);
 }
 
 pub fn parse(self: *Parser) Compiler {

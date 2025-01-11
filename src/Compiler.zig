@@ -1,5 +1,6 @@
 const std = @import("std");
 const Parser = @import("Parser.zig");
+const Errors = @import("Errors.zig");
 
 const Compiler = @This();
 
@@ -13,6 +14,8 @@ blocks: std.ArrayList(Parser.Block),
 source: []const u8,
 
 file_offsets: std.ArrayList(struct { fname: []const u8, offset: usize, end: usize }),
+
+errors: std.ArrayList(Errors.SourceError),
 
 pub fn new(alloc: std.mem.Allocator) Compiler {
     return Compiler{
@@ -44,4 +47,15 @@ pub fn print(self: *Compiler) void {
     for (self.blocks.items, 0..) |block, block_id| {
         std.debug.print("{d} {any}\n", .{ block_id, block });
     }
+}
+
+pub fn pushNode(self: *Compiler, ast_node: Parser.NodeId) !Parser.NodeId {
+    try self.ast_node.append(ast_node);
+    return self.ast_node.items.len - 1;
+}
+
+pub fn createNode(self: *Compiler, ast_node: Parser.AstNode, span_start: usize, span_end: usize) !Parser.NodeId {
+    try self.span_start.append(span_start);
+    try self.span_end.append(span_end);
+    return try self.pushNode(ast_node);
 }
