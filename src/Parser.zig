@@ -803,6 +803,394 @@ pub fn typeName(self: *Parser) !NodeId {
     }
 }
 
+pub fn expressionOrAssignment(self: *Parser) !NodeId {
+    return try self.mathExpression(true);
+}
+
+pub fn expression(self: *Parser) !NodeId {
+    return try self.mathExpression(false);
+}
+
+pub fn mathExpression(self: *Parser, allow_assignment: bool) !NodeId {
+    var expr_stack = std.ArrayList(NodeId).init(self.alloc);
+    var last_prec = 1000000;
+    const span_start = self.position();
+
+    // Check for special forms
+    if (self.isKeyword("if")) {
+        // TODO
+    } else if (self.isKeyword("new") or self.isKeyword("local")) {
+        // TODO
+    } else if (self.isKeyword("match")) {
+        // TODO
+    }
+
+    // Otherwise assume a math expression
+    var lhs: NodeId = undefined;
+    if (self.isSimpleExpression()) {
+        lhs = self.isSimpleExpression();
+    } else {
+        return try self.@"error"("incomplete math expression");
+    }
+
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.Equals) {
+            if (!allow_assignment) {
+                try self.@"error"("assignment found in expression");
+            }
+            const op = try self.operator();
+            const rhs = try self.expression();
+
+            const span_end = self.getSpanEnd(rhs);
+
+            return try self.createNode(
+                .{ .binary_op = AstNode.binary_op{ .left = lhs, .op = op, .right = rhs } },
+                span_start,
+                span_end,
+            );
+        }
+    }
+
+    try expr_stack.append(lhs);
+
+    while (self.hasTokens()) {
+        if (self.isOperator()) {
+            const op = try self.operator();
+            const op_prec = self.operatorPrecedence(op);
+
+            if (op_prec == ASSIGNMENT_PRECEDENCE and !allow_assignment) {
+                try self.errorOnNode("assignment found in expression", op);
+            }
+
+            const rhs: NodeId = undefined;
+            // TODO check for AstNode.As
+            if (self.isSimpleExpression()) {
+                rhs = self.simpleExpression();
+            } else {
+                return try self.@"error"("incomplete math expression");
+            }
+
+            while (op_prec <= last_prec and expr_stack.items.len > 1) {
+                // TODO hadle error cases here on stack
+                const _rhs = expr_stack.pop();
+                const _op = expr_stack.pop();
+
+                last_prec = self.operatorPrecedence(_op);
+
+                if (last_prec < op_prec) {
+                    try expr_stack.append(_op);
+                    try expr_stack.append(_rhs);
+                    break;
+                }
+
+                const _lhs = expr_stack.pop();
+                const _span_start = self.compiler.span_start.items[_lhs];
+                const span_end = self.compiler.span_end.items[_rhs];
+
+                try expr_stack.append(
+                    self.createNode(
+                        .{ .binary_op = AstNode.binary_op{ .left = _lhs, .op = _op, .right = _rhs } },
+                        _span_start,
+                        span_end,
+                    ),
+                );
+            }
+
+            try expr_stack.append(op);
+            try expr_stack.append(rhs);
+
+            last_prec = op_prec;
+        } else {
+            break;
+        }
+    }
+
+    while (expr_stack.items.len > 1) {
+        // TODO handle error cases here on stack
+        const _rhs = expr_stack.pop();
+        const _op = expr_stack.pop();
+        const _lhs = expr_stack.pop();
+
+        const _span_start = self.compiler.span_start.items[lhs];
+        const span_end = self.compiler.span_end.items[_rhs];
+
+        try expr_stack.append(
+            self.createNode(
+                .{ .binary_op = AstNode.binary_op{ .left = _lhs, .op = _op, .right = _rhs } },
+                _span_start,
+                span_end,
+            ),
+        );
+    }
+
+    if (expr_stack.items.len == 0) {
+        @panic("internal error: expression stack empty");
+    }
+
+    return expr_stack.items[0];
+}
+
+pub fn simpleExpression(self: *Parser) !NodeId {
+    const span_start = self.position();
+
+    var expr: NodeId = undefined;
+    if (self.isExpectedToken(TokenType.LCurly)) {
+        expr = try self.block(true);
+    } else if (self.isExpectedToken(TokenType.LParen)) {
+        self.lparen();
+        const output = self.expression();
+        self.rparen();
+        expr = output;
+    } else if (self.isKeyword("raw")) {
+        // TODO
+    } else if (self.isKeyword("true") or self.isKeyword("false")) {
+        expr = try self.boolean();
+    } else if (self.isKeyword("none")) {
+        // TODO
+    } else if (self.isKeyword("new") or self.isKeyword("local")) {
+        // TODO
+    } else if (self.isExpectedToken(TokenType.String)) {
+        expr = try self.string();
+    } else if (self.isExpectedToken(TokenType.CString)) {
+        expr = try self.cString();
+    } else if (self.isExpectedToken(TokenType.CChar)) {
+        expr = try self.cChar();
+    } else if (self.isExpectedToken(TokenType.Int) or self.isExpectedToken(TokenType.Float) or self.isExpectedToken(TokenType.Minus)) {
+        expr = try self.number();
+    } else if (self.isExpectedToken(TokenType.Name)) {
+        // TODO
+    } else if (self.isExpectedToken(TokenType.Dot)) {
+        // TODO
+    } else {
+        return try self.@"error"("incomplete expression");
+    }
+
+    while (true) {
+        if (self.isExpectedToken(TokenType.DotDot)) {
+            // TODO
+        } else if (self.isExpectedToken(TokenType.Dot)) {
+            // TODO
+        } else if (self.isExpectedToken(TokenType.LSquare)) {
+            // TODO
+        } else if (self.isExpectedToken(TokenType.ColonColon)) {
+            // TODO
+        } else {
+            return expr;
+        }
+    }
+}
+
+pub fn number(self: *Parser) !NodeId {
+    if (self.peek()) |token| {
+        switch (token.token_type) {
+            TokenType.Int => {
+                _ = self.next();
+                return try self.createNode(AstNode.int, token.span_start, token.span_end);
+            },
+            TokenType.Float => {
+                _ = self.next();
+                return try self.createNode(AstNode.float, token.span_start, token.span_end);
+            },
+            TokenType.Minus => {
+                _ = self.next();
+                const remaining = try self.number();
+                const span_end = self.getSpanEnd(remaining);
+                const contents = self.compiler.source[token.span_start..token.span_end];
+
+                if (std.mem.containsAtLeast(u8, contents, 1, '.')) {
+                    return try self.createNode(AstNode.float, token.span_start, span_end);
+                } else {
+                    return try self.createNode(AstNode.int, token.span_start, span_end);
+                }
+            },
+            else => return try self.@"error"("expected: number"),
+        }
+    } else {
+        return try self.@"error"("expected: number");
+    }
+}
+
+pub fn boolean(self: *Parser) !NodeId {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.Name) {
+            if (std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "true")) {
+                _ = self.next();
+                return try self.createNode(AstNode.true, token.span_start, token.span_end);
+            } else if (std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "false")) {
+                _ = self.next();
+                return try self.createNode(AstNode.false, token.span_start, token.span_end);
+            } else {
+                return try self.@"error"("expected: boolean");
+            }
+        } else {
+            return try self.@"error"("expected: boolean");
+        }
+    }
+}
+
+pub fn none(self: *Parser) !NodeId {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.Name) {
+            if (std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "none")) {
+                _ = self.next();
+                return try self.createNode(AstNode.none, token.span_start, token.span_end);
+            } else {
+                return try self.@"error"("expected: none");
+            }
+        } else {
+            return try self.@"error"("expected: none");
+        }
+    }
+}
+
+pub fn string(self: *Parser) !NodeId {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.String) {
+            _ = self.next();
+            return try self.createNode(AstNode.string, token.span_start, token.span_end);
+        } else {
+            return try self.@"error"("expected: string");
+        }
+    }
+}
+
+pub fn cString(self: *Parser) !NodeId {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.CString) {
+            _ = self.next();
+            return try self.createNode(AstNode.cstring, token.span_start, token.span_end);
+        } else {
+            return try self.@"error"("expected: C-based string");
+        }
+    }
+}
+
+pub fn cChar(self: *Parser) !NodeId {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.CChar) {
+            _ = self.next();
+            return try self.createNode(AstNode.cchar, token.span_start, token.span_end);
+        } else {
+            return try self.@"error"("expected: C-based char");
+        }
+    }
+}
+
+pub fn operator(self: *Parser) !NodeId {
+    if (self.peek()) |token| {
+        switch (token.token_type) {
+            TokenType.Plus => {
+                _ = self.next();
+                return try self.createNode(AstNode.plus, token.span_start, token.span_end);
+            },
+            TokenType.PlusPlus => {
+                _ = self.next();
+                return try self.createNode(AstNode.append, token.span_start, token.span_end);
+            },
+            TokenType.Dash => {
+                _ = self.next();
+                return try self.createNode(AstNode.minus, token.span_start, token.span_end);
+            },
+            TokenType.Asterisk => {
+                _ = self.next();
+                return try self.createNode(AstNode.multiply, token.span_start, token.span_end);
+            },
+            TokenType.ForwardSlash => {
+                _ = self.next();
+                return try self.createNode(AstNode.divide, token.span_start, token.span_end);
+            },
+            TokenType.LessThan => {
+                _ = self.next();
+                return try self.createNode(AstNode.less_than, token.span_start, token.span_end);
+            },
+            TokenType.LessThanEqual => {
+                _ = self.next();
+                return try self.createNode(AstNode.less_than_equal, token.span_start, token.span_end);
+            },
+            TokenType.GreaterThan => {
+                _ = self.next();
+                return try self.createNode(AstNode.greater_than, token.span_start, token.span_end);
+            },
+            TokenType.GreaterThanEqual => {
+                _ = self.next();
+                return try self.createNode(AstNode.greater_than_equal, token.span_start, token.span_end);
+            },
+            TokenType.EqualsEquals => {
+                _ = self.next();
+                return try self.createNode(AstNode.equals, token.span_start, token.span_end);
+            },
+            TokenType.ExclamationEquals => {
+                _ = self.next();
+                return try self.createNode(AstNode.not_equals, token.span_start, token.span_end);
+            },
+            TokenType.AsteriskAsterisk => {
+                _ = self.next();
+                return try self.createNode(AstNode.pow, token.span_start, token.span_end);
+            },
+            TokenType.AmpersandAmpersand => {
+                _ = self.next();
+                return try self.createNode(AstNode.@"and", token.span_start, token.span_end);
+            },
+            TokenType.Ampersand => {
+                _ = self.next();
+                return try self.createNode(AstNode.bitwise_and, token.span_start, token.span_end);
+            },
+            TokenType.Pipe => {
+                _ = self.next();
+                return try self.createNode(AstNode.bitwise_or, token.span_start, token.span_end);
+            },
+            TokenType.PipePipe => {
+                _ = self.next();
+                return try self.createNode(AstNode.@"or", token.span_start, token.span_end);
+            },
+            TokenType.LessThanLessThan => {
+                _ = self.next();
+                return try self.createNode(AstNode.shift_left, token.span_start, token.span_end);
+            },
+            TokenType.GreaterThanGreaterThan => {
+                _ = self.next();
+                return try self.createNode(AstNode.shift_right, token.span_start, token.span_end);
+            },
+            TokenType.Equals => {
+                _ = self.next();
+                return try self.createNode(AstNode.assignment, token.span_start, token.span_end);
+            },
+            TokenType.PlusEquals => {
+                _ = self.next();
+                return try self.createNode(AstNode.add_assignment, token.span_start, token.span_end);
+            },
+            TokenType.DashEquals => {
+                _ = self.next();
+                return try self.createNode(AstNode.subtract_assignment, token.span_start, token.span_end);
+            },
+            TokenType.AsteriskEquals => {
+                _ = self.next();
+                return try self.createNode(AstNode.multiply_assignment, token.span_start, token.span_end);
+            },
+            TokenType.ForwardSlashEquals => {
+                _ = self.next();
+                return try self.createNode(AstNode.divide_assignment, token.span_start, token.span_end);
+            },
+            TokenType.Name => {
+                _ = self.next();
+                if (std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "as")) {
+                    return try self.createNode(AstNode.as, token.span_start, token.span_end);
+                } else {
+                    return try self.@"error"("expected: operator");
+                }
+            },
+            else => return try self.@"error"("expected: operator"),
+        }
+    } else {
+        return try self.@"error"("expected: operator");
+    }
+}
+
+pub fn operatorPrecedence(self: *Parser, op: NodeId) usize {
+    const node = self.compiler.getNode(op);
+    return node.precedence();
+}
+
 pub fn name(self: *Parser) !NodeId {
     if (self.peek()) |token| {
         if (token.token_type == TokenType.Name) {

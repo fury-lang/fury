@@ -60,6 +60,10 @@ pub fn createNode(self: *Compiler, ast_node: Parser.AstNode, span_start: usize, 
     return try self.pushNode(ast_node);
 }
 
+pub fn getNode(self: *Compiler, node_id: Parser.NodeId) Parser.AstNode {
+    return self.ast_node.items[node_id];
+}
+
 pub fn numAstNodes(self: *Compiler) usize {
     return self.ast_node.items.len;
 }
