@@ -1,0 +1,21 @@
+// error: param is a shared pointer, and self is mutable
+
+struct Stats {
+    age: i64
+}
+
+struct Foo {
+    private stats: Stats
+
+    fun create(age: i64) -> owned Foo {
+        return new owned Foo(stats: new Stats(age: age))
+    }
+
+    fun set_stats(mut self, stats: Stats) [self == stats] {
+        .stats = stats
+    }
+}
+
+fun main() {
+    let foo = Foo::create(age: 88)
+}

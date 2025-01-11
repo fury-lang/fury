@@ -1,0 +1,7 @@
+// output: 11
+
+mut x = 5
+
+x = x + 6
+
+println(x)

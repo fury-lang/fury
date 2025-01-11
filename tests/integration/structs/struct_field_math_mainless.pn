@@ -1,0 +1,9 @@
+// output: 405
+
+struct Employee {
+    name: c_string,
+    age: i64,
+}
+
+let employee = new Employee(name: c"Bob", age: 123)
+println(employee.age * 3 + 4 * 9)

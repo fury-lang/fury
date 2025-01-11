@@ -1,0 +1,10 @@
+// output: abc
+
+mut x = raw[]
+
+unsafe {
+    resize x 1
+    x[0] = c"abc"
+    println(x[0])
+}
+

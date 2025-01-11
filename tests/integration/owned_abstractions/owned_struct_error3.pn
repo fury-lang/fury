@@ -1,0 +1,21 @@
+// error: return type is a shared pointer
+
+struct Stats {
+    age: i64
+}
+
+struct Foo {
+    private stats: Stats
+
+    fun create(age: i64) -> owned Foo {
+        return new owned Foo(stats: new Stats(age: age))
+    }
+
+    fun get_stats(self) -> Stats {
+        return .stats
+    }
+}
+
+fun main() {
+    let foo = Foo::create(age: 88)
+}

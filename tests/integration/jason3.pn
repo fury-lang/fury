@@ -1,0 +1,18 @@
+struct Stats {
+    age: i64
+}
+
+struct Employee {
+    name: c_string,
+    stats: Stats,
+}
+
+fun helper(mut employee: Employee) {
+    for x in 1..100000 {
+        employee.stats = new Stats(age: 100)
+    }
+}
+
+fun main() {
+    helper(new Employee(name: "foo", new Stats(age: 100)))
+}

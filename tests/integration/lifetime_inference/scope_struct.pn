@@ -1,0 +1,13 @@
+// output: 123
+
+struct Employee {
+    name: c_string,
+    age: i64,
+}
+
+fun main() {
+    if true {
+        let employee = new Employee(name: c"Bob", age: 123)
+        println(employee.age)
+    }
+}

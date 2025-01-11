@@ -1,0 +1,9 @@
+// output: hello
+
+fun greet() {
+    println(c"hello")
+}
+
+fun main() {
+    greet()
+}

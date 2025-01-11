@@ -1,0 +1,13 @@
+// error: could not find match enum case
+
+enum State {
+    None
+}
+
+fun main() {
+    let x = State::None
+
+    match x {
+        State::Some => println(c"Some")
+    }
+}

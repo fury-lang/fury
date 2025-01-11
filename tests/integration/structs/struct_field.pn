@@ -1,0 +1,11 @@
+// output: Bob
+
+struct Employee {
+    name: c_string,
+    age: i64,
+}
+
+fun main() {
+    let employee = new Employee(name: c"Bob", age: 123)
+    println(employee.name)
+}

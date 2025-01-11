@@ -1,0 +1,8 @@
+// error: expected name 'x'
+
+fun foo(x: i64) {
+    println(x)
+}
+
+// Wrong label in call
+foo(u: 99)

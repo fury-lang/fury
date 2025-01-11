@@ -1,0 +1,5 @@
+// output: 123
+
+let x = 123
+
+println(x)

@@ -1,0 +1,22 @@
+// output: 33
+
+struct Stats {
+    age: i64
+}
+
+struct Employee {
+    name: c_string,
+    stats: Stats,
+}
+
+fun set_stats(mut employee: Employee) {
+    employee.stats = new Stats(age: 33)
+}
+
+fun main() {
+    mut employee = new Employee(name: c"Sophia", stats: new Stats(age: 22))
+
+    set_stats(employee)
+
+    println(employee.stats.age)
+}

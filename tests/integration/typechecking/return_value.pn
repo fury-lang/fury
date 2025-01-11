@@ -1,0 +1,7 @@
+// output: 3
+
+fun foo() -> i64 {
+    return 3
+}
+
+println(foo())

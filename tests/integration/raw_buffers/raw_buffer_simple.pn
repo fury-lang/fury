@@ -1,0 +1,4 @@
+// output: 2
+
+let buffer = raw[1, 2, 3]
+unsafe { println(buffer[1]) }
