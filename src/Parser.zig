@@ -237,16 +237,16 @@ pub const AstNode = union(enum) {
         switch (self) {
             AstNode.as => 200,
             AstNode.pow => 100,
-            AstNode.multiply | AstNode.divide => 95,
+            AstNode.multiply, AstNode.divide => 95,
             //AstNode.modulo => 95,
-            AstNode.plus | AstNode.minus => 90,
-            AstNode.shift_left | AstNode.shift_right => 88,
+            AstNode.plus, AstNode.minus => 90,
+            AstNode.shift_left, AstNode.shift_right => 88,
             AstNode.bitwise_and => 85,
             AstNode.bitwise_or => 83,
-            AstNode.less_than | AstNode.less_than_or_equal | AstNode.greater_than | AstNode.greater_than_or_equal | AstNode.equals | AstNode.not_equals => 80,
+            AstNode.less_than, AstNode.less_than_or_equal, AstNode.greater_than, AstNode.greater_than_or_equal, AstNode.equals, AstNode.not_equals => 80,
             AstNode.@"and" => 50,
             AstNode.@"or" => 40,
-            AstNode.assigment | AstNode.add_assignment | AstNode.subtract_assignment | AstNode.multiply_assignment | AstNode.divide_assignment => ASSIGNMENT_PRECEDENCE,
+            AstNode.assigment, AstNode.add_assignment, AstNode.subtract_assignment, AstNode.multiply_assignment, AstNode.divide_assignment => ASSIGNMENT_PRECEDENCE,
             else => 0,
         }
     }
@@ -352,4 +352,468 @@ pub fn new(alloc: std.mem.Allocator, compiler: Compiler, span_offset: usize) Par
         .current_file = current_file,
         .content_length = content_length,
     };
+}
+
+fn position(self: *Parser) usize {
+    if (self.peek()) |token| {
+        return token.span_start;
+    } else {
+        return self.currentFileEnd();
+    }
+}
+
+fn getSpanEnd(self: *Parser, node_id: NodeId) usize {
+    return self.compiler.span_end.items[node_id];
+}
+
+pub fn hasTokens(self: *Parser) bool {
+    if (self.peek()) |_| {
+        return true;
+    }
+    return false;
+}
+
+pub fn isOperator(self: *Parser) bool {
+    if (self.peek()) |token| {
+        return switch (token.token_type) {
+            TokenType.Asterisk,
+            TokenType.AsteriskAsterisk,
+            TokenType.Dash,
+            TokenType.EqualsEquals,
+            TokenType.ExclamationEquals,
+            TokenType.ForwardSlash,
+            TokenType.LessThan,
+            TokenType.LessThanEqual,
+            TokenType.Plus,
+            TokenType.GreaterThan,
+            TokenType.GreaterThanEqual,
+            TokenType.AmpersandAmpersand,
+            TokenType.Ampersand,
+            TokenType.PipePipe,
+            TokenType.Pipe,
+            TokenType.LessThanLessThan,
+            TokenType.GreaterThanGreaterThan,
+            TokenType.Equals,
+            TokenType.PlusEquals,
+            TokenType.DashEquals,
+            TokenType.AsteriskEquals,
+            TokenType.ForwardSlashEquals,
+            => true,
+            else => {
+                if (std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "as")) {
+                    return true;
+                } else {
+                    return false;
+                }
+            },
+        };
+    }
+    return false;
+}
+
+pub fn isExpectedToken(self: *Parser, expected: TokenType) bool {
+    if (self.peek()) |token| {
+        if (expected == token.token_type) {
+            return true;
+        }
+    }
+    return false;
+}
+
+pub fn isKeyword(self: *Parser, keyword: []const u8) bool {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.Name) {
+            return self.compiler.source[token.span_start..token.span_end] == keyword;
+        }
+    }
+    return false;
+}
+
+pub fn isExpression(self: *Parser) bool {
+    self.isSimpleExpression() or self.isKeyword("if");
+}
+
+pub fn isSimpleExpression(self: *Parser) bool {
+    if (self.peek()) |token| {
+        switch (token.token_type) {
+            TokenType.Int,
+            TokenType.Float,
+            TokenType.Dash,
+            TokenType.String,
+            TokenType.CString,
+            TokenType.CChar,
+            TokenType.LCurly,
+            TokenType.LSquare,
+            TokenType.LParen,
+            TokenType.Dot,
+            TokenType.Name,
+            => true,
+            else => false,
+            // else => {
+            //     if (token.token_type == TokenType.Name) {
+            //         if (std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end],"true")) {
+            //             return true;
+            //         } else {
+            //             return false;
+            //         }
+            //     }
+            // },
+        }
+    }
+    return false;
+}
+
+pub fn parse(self: *Parser) Compiler {
+    self.program();
+    return self.compiler;
+}
+
+pub fn program(self: *Parser) NodeId {
+    return self.block(false);
+}
+
+pub fn block(self: *Parser, expect_curly_braces: bool) NodeId {
+    const span_start = self.position();
+    var span_end = self.position();
+
+    var curr_body = std.ArrayList(NodeId).init(self.alloc);
+    if (expect_curly_braces) {
+        self.isExpectedToken(TokenType.LCurly);
+    }
+
+    while (self.position() < self.currentFileEnd()) {}
+}
+
+pub fn lexQuotedString(self: *Parser) ?Token {
+    const span_start = self.current_file.span_offset;
+    var span_position = span_start + 1;
+    var is_excaped = false;
+    while (span_position < self.currentFileEnd()) {
+        if (is_excaped) {
+            is_excaped = false;
+        } else if (self.compiler.source[span_position] == '\\') {
+            is_excaped = true;
+        } else if (self.compiler.source[span_position] == '"') {
+            span_position += 1;
+            break;
+        }
+        span_position += 1;
+    }
+
+    self.current_file.span_offset = span_position;
+
+    return Token{
+        .token_type = TokenType.String,
+        .span_start = span_start,
+        .span_end = self.current_file.span_offset,
+    };
+}
+
+pub fn lexQuotedCString(self: *Parser) ?Token {
+    const span_start = self.current_file.span_offset;
+    var span_position = span_start + 1;
+    var is_excaped = false;
+    while (span_position < self.currentFileEnd()) {
+        if (is_excaped) {
+            is_excaped = false;
+        } else if (self.compiler.source[span_position] == '\\') {
+            is_excaped = true;
+        } else if (self.compiler.source[span_position] == '"') {
+            span_position += 1;
+            break;
+        }
+        span_position += 1;
+    }
+
+    self.current_file.span_offset = span_position;
+
+    return Token{
+        .token_type = TokenType.CString,
+        .span_start = span_start,
+        .span_end = self.current_file.span_offset,
+    };
+}
+
+pub fn lexQuotedCChar(self: *Parser) ?Token {
+    const span_start = self.current_file.span_offset;
+    var span_position = span_start + 1;
+    var is_excaped = false;
+    while (span_position < self.compiler.source.len) {
+        if (is_excaped) {
+            is_excaped = false;
+        } else if (self.compiler.source[span_position] == '\\') {
+            is_excaped = true;
+        } else if (self.compiler.source[span_position] == '\'') {
+            span_position += 1;
+            break;
+        }
+        span_position += 1;
+    }
+
+    self.current_file.span_offset = span_position;
+
+    return Token{
+        .token_type = TokenType.CChar,
+        .span_start = span_start,
+        .span_end = self.current_file.span_offset,
+    };
+}
+
+pub fn lexNumber(self: *Parser) ?Token {
+    const span_start = self.current_file.span_offset;
+    var span_position = span_start;
+    while (span_position < self.currentFileEnd()) {
+        if (!self.compiler.source[span_position]) {
+            break;
+        }
+        span_position += 1;
+    }
+
+    // skip hex, octal, binary, float for now
+
+    self.current_file.span_offset = span_position;
+
+    return Token{
+        .token_type = TokenType.Int,
+        .span_start = span_start,
+        .span_end = self.current_file.span_offset,
+    };
+}
+
+pub fn skipSpace(self: *Parser) void {
+    var span_position = self.current_file.span_offset;
+    while (span_position < self.currentFileEnd()) {
+        const c = self.compiler.source[span_position];
+        if (c == ' ' or c == '\t') {
+            span_position += 1;
+        } else {
+            break;
+        }
+    }
+    self.current_file.span_offset = span_position;
+}
+
+pub fn newLine(self: *Parser) ?Token {
+    var span_position = self.current_file.span_offset;
+    while (span_position < self.currentFileEnd()) {
+        const c = self.compiler.source[span_position];
+        if (c == '\n' or c == '\r') {
+            span_position += 1;
+        } else {
+            break;
+        }
+    }
+
+    if (self.current_file.span_offset == span_position) {
+        return null;
+    } else {
+        const output = Token{
+            .token_type = TokenType.Newline,
+            .span_start = self.current_file.span_offset,
+            .span_end = span_position,
+        };
+        self.current_file.span_offset = span_position;
+        return output;
+    }
+}
+
+pub fn skipComment(self: *Parser) void {
+    var span_position = self.current_file.span_offset;
+    while (span_position < self.currentFileEnd() and self.compiler.source[span_position] != '\n') {
+        span_position += 1;
+    }
+    self.current_file.span_offset = span_position;
+}
+
+pub fn lexName(self: *Parser) ?Token {
+    const span_start = self.current_file.span_offset;
+    var span_position = span_start;
+    while (span_position < self.currentFileEnd() and (!isAsciiWhiteSpace(self.compiler.source[span_position]) and !isAsciiPunctuation(self.compiler.source[span_position]) or self.compiler.source[span_position] == '_')) {
+        span_position += 1;
+    }
+    self.current_file.span_offset = span_position;
+
+    return Token{
+        .token_type = TokenType.Name,
+        .span_start = span_start,
+        .span_end = self.current_file.span_offset,
+    };
+}
+
+pub fn lexSymbol(self: *Parser) ?Token {
+    const span_start = self.current_file.span_offset;
+    const result = switch (self.compiler.source[span_start]) {
+        '(' => Token{
+            .token_type = TokenType.LParen,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        '[' => Token{
+            .token_type = TokenType.LSquare,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        '{' => Token{
+            .token_type = TokenType.LCurly,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        // skip <=, << for now
+        '<' => Token{
+            .token_type = TokenType.LessThan,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        ')' => Token{
+            .token_type = TokenType.RParen,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        ']' => Token{
+            .token_type = TokenType.RSquare,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        '}' => Token{
+            .token_type = TokenType.RCurly,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        // skip >=, >> for now
+        '>' => Token{
+            .token_type = TokenType.GreaterThan,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        // skip ++, +=, --, -=, **, *=, //, /=, ==, !=, :: for now
+        '+' => Token{
+            .token_type = TokenType.Plus,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        '-' => Token{
+            .token_type = TokenType.Minus,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        '*' => Token{
+            .token_type = TokenType.Multiply,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        '/' => Token{
+            .token_type = TokenType.Divide,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        '=' => Token{
+            .token_type = TokenType.Equals,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        ':' => Token{
+            .token_type = TokenType.Colon,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        ';' => Token{
+            .token_type = TokenType.Semicolon,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        // skip .. for now
+        '.' => Token{
+            .token_type = TokenType.Dot,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        '!' => Token{
+            .token_type = TokenType.Exclamation,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        '|' => Token{
+            .token_type = TokenType.Pipe,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        '&' => Token{
+            .token_type = TokenType.Ampersand,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        ',' => Token{
+            .token_type = TokenType.Comma,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        '?' => Token{
+            .token_type = TokenType.QuestionMark,
+            .span_start = span_start,
+            .span_end = span_start + 1,
+        },
+        else => @panic("Internal compiler error: symbol character mismatched in lexer"),
+    };
+
+    self.current_file.span_offset = result.span_end;
+
+    return result;
+}
+
+pub fn peek(self: *Parser) ?Token {
+    const prev_offset = self.current_file.span_offset;
+    const output = self.next();
+    self.current_file.span_offset = prev_offset;
+
+    return output;
+}
+
+pub fn next(self: *Parser) ?Token {
+    while (true) {
+        if (self.current_file.span_offset >= self.currentFileEnd()) {
+            return null;
+        }
+
+        const c = self.compiler.source[self.current_file.span_offset];
+
+        if (isAsciiDigit(c)) {
+            return self.lexNumber();
+        } else if (c == '"') {
+            return self.lexQuotedString();
+        } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and c == 'c' and self.compiler.source[self.current_file.span_offset + 1] == '"') {
+            return self.lexQuotedCString();
+        } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and c == 'c' and self.compiler.source[self.current_file.span_offset + 1] == '\'') {
+            return self.lexQuotedCChar();
+        } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and c == '/' and self.compiler.source[self.current_file.span_offset + 1] == '/') {
+            self.skipComment();
+        } else if (is_symbol(c)) {
+            return self.lexSymbol();
+        } else if (c == ' ' or c == '\t') {
+            self.skipSpace();
+        } else if (c == '\n' or c == '\r') {
+            return self.newLine();
+        } else {
+            return self.lexName();
+        }
+    }
+}
+
+fn currentFileEnd(self: *Parser) usize {
+    return self.compiler.file_offsets.items[self.current_file.file_index].end;
+}
+
+fn isAsciiWhiteSpace(c: u8) bool {
+    return c == ' ' or c == '\t' or c == '\n' or c == '\r';
+}
+
+fn isAsciiPunctuation(c: u8) bool {
+    return c == '.' or c == ',' or c == ';' or c == ':' or c == '(' or c == ')' or c == '[' or c == ']' or c == '{' or c == '}' or c == '<' or c == '>' or c == '=' or c == '$' or c == '|' or c == '!' or c == '~' or c == '&' or c == '\'' or c == '"';
+}
+
+fn isAsciiDigit(c: u8) bool {
+    return c >= '0' and c <= '9';
+}
+
+fn isAsciiHexDigit(c: u8) bool {
+    return isAsciiDigit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
 }
