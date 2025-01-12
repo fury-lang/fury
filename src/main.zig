@@ -1,6 +1,7 @@
 const std = @import("std");
 const Compiler = @import("Compiler.zig");
 const Parser = @import("Parser.zig");
+const Typechecker = @import("Typechecker.zig");
 
 pub fn main() !void {
     const alloc = std.heap.page_allocator;

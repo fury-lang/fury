@@ -1,19 +1,32 @@
 const std = @import("std");
 const Parser = @import("Parser.zig");
 const Errors = @import("Errors.zig");
+const Typechecker = @import("Typechecker.zig");
 
 const Compiler = @This();
 
+// Core information, indexed by NodeId
 alloc: std.mem.Allocator,
 span_start: std.ArrayList(usize),
 span_end: std.ArrayList(usize),
 ast_node: std.ArrayList(Parser.AstNode),
 
+// Blocks, indexed by BlockId
 blocks: std.ArrayList(Parser.Block),
 
 source: []const u8,
 
 file_offsets: std.ArrayList(File),
+
+// Definitions:
+// indexed by VarId
+variables: std.ArrayList(Typechecker.Variable),
+// indexed by FuncId
+functions: std.ArrayList(Typechecker.Function),
+// indexed by TypeId
+types: std.ArrayList(Typechecker.Type),
+// indexed by ModuleId
+modules: std.ArrayList(Typechecker.Module),
 
 errors: std.ArrayList(Errors.SourceError),
 
@@ -32,6 +45,10 @@ pub fn new(alloc: std.mem.Allocator) Compiler {
         .blocks = std.ArrayList(Parser.Block).init(alloc),
         .source = "",
         .file_offsets = std.ArrayList(File).init(alloc),
+        .variables = std.ArrayList(Typechecker.Variable).init(alloc),
+        .functions = std.ArrayList(Typechecker.Function).init(alloc),
+        .types = std.ArrayList(Typechecker.Type).init(alloc),
+        .modules = std.ArrayList(Typechecker.Module).init(alloc),
         .errors = std.ArrayList(Errors.SourceError).init(alloc),
     };
 }
@@ -216,4 +233,9 @@ pub fn numAstNodes(self: *Compiler) usize {
 
 pub fn getSource(self: *Compiler, node_id: Parser.NodeId) []const u8 {
     return self.source[self.span_start.items[node_id]..self.span_end.items[node_id]];
+}
+
+pub fn pushType(self: *Compiler, ty: Typechecker.Type) !Typechecker.TypeId {
+    try self.types.append(ty);
+    return self.types.items.len - 1;
 }
