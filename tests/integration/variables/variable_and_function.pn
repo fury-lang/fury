@@ -2,6 +2,6 @@
 
 foo(3)
 
-fun foo(x: i64) {
+fun (x: i64) {
     println(x);
 }
