@@ -13,6 +13,7 @@ content_length: usize,
 
 const FileCursor = struct {
     span_offset: usize,
+    /// index into `Compiler.file_offsets` list
     file_index: usize,
 };
 
@@ -35,12 +36,12 @@ pub const RequiredLifetime = enum {
 pub const ASSIGNMENT_PRECEDENCE: usize = 10;
 
 pub const AstNode = union(enum) {
-    int: TokenType.Int,
-    float: TokenType.Float,
-    string: TokenType.String,
-    c_string: TokenType.CString,
-    c_char: TokenType.CChar,
-    name: TokenType.Name,
+    int,
+    float,
+    string,
+    c_string,
+    c_char,
+    name,
     type: struct {
         name: NodeId,
         params: ?NodeId,
@@ -62,46 +63,46 @@ pub const AstNode = union(enum) {
     },
 
     // Booleans
-    true: TokenType.True,
-    false: TokenType.False,
+    true,
+    false,
 
     // Special lifetimes
-    return_lifetime: TokenType.ReturnLifetime,
+    return_lifetime,
 
     // Empty optional values
-    node: null,
+    none,
 
     // Operators
-    equals: TokenType.Equals,
-    not_equals: TokenType.NotEqual,
-    less_than: TokenType.LessThan,
-    greater_than: TokenType.GreaterThan,
-    less_than_equal: TokenType.LessThanEqual,
-    greater_than_equal: TokenType.GreaterThanEqual,
-    plus: TokenType.Plus,
-    minus: TokenType.Minus,
-    append: TokenType.PlusPlus,
-    multiply: TokenType.Multiply,
-    divide: TokenType.Divide,
-    @"and": TokenType.And,
-    @"or": TokenType.Or,
-    pow: TokenType.Pow,
+    equals,
+    not_equals,
+    less_than,
+    greater_than,
+    less_than_equal,
+    greater_than_equal,
+    plus,
+    minus,
+    append,
+    multiply,
+    divide,
+    @"and",
+    @"or",
+    pow,
 
     // Bitwise operators
-    bitwise_and: TokenType.Ampersand,
-    bitwise_or: TokenType.Pipe,
-    shift_left: TokenType.LessThanLessThan,
-    shift_right: TokenType.GreaterThanGreaterThan,
+    bitwise_and,
+    bitwise_or,
+    shift_left,
+    shift_right,
 
     // Special operator
-    as: TokenType.Name,
+    as,
 
     // Assignment
-    assignment: TokenType.Equals,
-    add_assignment: TokenType.PlusEquals,
-    subtract_assignment: TokenType.DashEquals,
-    multiply_assignment: TokenType.AsteriskEquals,
-    divide_assignment: TokenType.ForwardSlashEquals,
+    assignment,
+    add_assignment,
+    subtract_assignment,
+    multiply_assignment,
+    divide_assignment,
 
     // Statements
     let: struct {
@@ -119,10 +120,9 @@ pub const AstNode = union(enum) {
         range: NodeId,
         block: NodeId,
     },
-    @"return": struct {
-        value: ?NodeId,
-    },
+    @"return": ?NodeId,
     @"break": null,
+
     namespaced_lookup: struct {
         namespace: NodeId,
         item: NodeId,
@@ -449,16 +449,23 @@ pub fn isSimpleExpression(self: *Parser) bool {
             TokenType.Dot,
             TokenType.Name,
             => true,
-            else => false,
-            // else => {
-            //     if (token.token_type == TokenType.Name) {
-            //         if (std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end],"true")) {
-            //             return true;
-            //         } else {
-            //             return false;
-            //         }
-            //     }
-            // },
+            else => {
+                if (token.token_type == TokenType.Name) {
+                    // zig fmt: off
+                    if (std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "true") 
+                    or std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "false") 
+                    or std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "new") 
+                    or std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "local") 
+                    or std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "raw") 
+                    or std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "unsafe")) 
+                    {
+                        return true;
+                    } else {
+                        return false;
+                    }
+                    // zig fmt: on
+                }
+            },
         }
     }
     return false;
@@ -521,7 +528,7 @@ pub fn block(self: *Parser, expect_curly_braces: bool) !NodeId {
 
     var curr_body = std.ArrayList(NodeId).init(self.alloc);
     if (expect_curly_braces) {
-        self.isExpectedToken(TokenType.LCurly);
+        self.lcurly();
     }
 
     while (self.position() < self.currentFileEnd()) {
@@ -535,35 +542,51 @@ pub fn block(self: *Parser, expect_curly_braces: bool) !NodeId {
         } else if (self.isKeyword("fun")) {
             try curr_body.append(try self.funDefinition());
         } else if (self.isKeyword("extern")) {
-            // TODO
+            unreachable;
         } else if (self.isKeyword("struct")) {
-            // TODO
+            unreachable;
         } else if (self.isKeyword("class")) {
-            // TODO
+            unreachable;
         } else if (self.isKeyword("enub")) {
-            // TODO
+            unreachable;
         } else if (self.is_symbol("use")) {
-            // TODO
+            unreachable;
         } else if (self.isKeyword("let")) {
             try curr_body.append(try self.letStatement());
         } else if (self.isKeyword("mut")) {
-            // TODO
+            unreachable;
         } else if (self.isKeyword("while")) {
-            // TODO
+            unreachable;
         } else if (self.isKeyword("for")) {
-            // TODO
+            unreachable;
         } else if (self.isKeyword("return")) {
-            // TODO
+            unreachable;
         } else if (self.isKeyword("break")) {
-            // TODO
+            unreachable;
         } else if (self.isKeyword("defer")) {
-            // TODO
+            unreachable;
         } else if (self.isKeyword("resize")) {
-            // TODO
+            unreachable;
         } else if (self.isKeyword("unsafe")) {
-            // TODO
+            unreachable;
         } else {
-            // TODO
+            const _span_start = self.position();
+            const expr = try self.expressionOrAssignment();
+            const _span_end = self.getSpanEnd(expr);
+
+            if (self.isExpectedToken(TokenType.Semicolon)) {
+                // This is a statement, not an expression
+                _ = self.next();
+                try curr_body.append(
+                    self.createNode(
+                        .{ .statement = expr },
+                        _span_start,
+                        _span_end,
+                    ),
+                );
+            } else {
+                try curr_body.append(expr);
+            }
         }
     }
 
@@ -582,7 +605,7 @@ pub fn funDefinition(self: *Parser) !NodeId {
 
     const _name = try self.name();
 
-    var type_params = null;
+    var type_params: ?NodeId = null;
     if (self.isExpectedToken(TokenType.LessThan)) {
         type_params = try self.typeParams();
     }
@@ -600,9 +623,9 @@ pub fn funDefinition(self: *Parser) !NodeId {
                 self.rsquare();
                 break;
             } else if (self.isExpectedToken(TokenType.Newline)) {
-                self.newLine();
+                _ = self.newLine();
             } else if (self.isExpectedToken(TokenType.Comma)) {
-                self.next();
+                _ = self.next();
             } else if (self.isExpectedToken(TokenType.Name)) {
                 // TODO
                 _ = &lifetime_annotations;
@@ -615,8 +638,8 @@ pub fn funDefinition(self: *Parser) !NodeId {
 
     const return_ty: ?NodeId = null;
     if (self.isExpectedToken(TokenType.ThinArrow)) {
-        self.next();
-        try self.type();
+        _ = self.next();
+        return_ty = try self.typeName();
     }
 
     const initial_node_id: ?NodeId = self.compiler.numAstNodes();
@@ -625,7 +648,7 @@ pub fn funDefinition(self: *Parser) !NodeId {
     var span_end: usize = undefined;
     if (self.isExpectedToken(TokenType.LCurly)) {
         _block = try self.block(true);
-        span_end = self.getSpanEnd(block.?);
+        span_end = self.getSpanEnd(_block.?);
     } else {
         span_end = self.position();
     }
@@ -652,14 +675,14 @@ pub fn typeParams(self: *Parser) !NodeId {
     const span_start = self.position();
     const span_end: usize = undefined;
 
-    var _params = std.ArrayList(NodeId).init(self.alloc);
+    var params_list = std.ArrayList(NodeId).init(self.alloc);
     self.lessThan();
 
     while (self.hasTokens()) {
         if (self.isExpectedToken(TokenType.GreaterThan)) {
             break;
         }
-        try _params.append(try self.name());
+        try params_list.append(try self.name());
         if (self.isExpectedToken(TokenType.Comma)) {
             _ = self.next();
         }
@@ -669,7 +692,7 @@ pub fn typeParams(self: *Parser) !NodeId {
     self.greaterThan();
 
     return try self.createNode(
-        .{ .params = _params },
+        .{ .params = params_list },
         span_start,
         span_end,
     );
@@ -764,6 +787,7 @@ pub fn paramList(self: *Parser) !std.ArrayList(NodeId) {
 pub fn typeName(self: *Parser) !NodeId {
     if (self.isKeyword("raw")) {
         // TODO
+        unreachable;
     }
 
     var pointer_type = PointerType.Unknown;
@@ -788,6 +812,7 @@ pub fn typeName(self: *Parser) !NodeId {
 
             var optional = false;
             if (self.isExpectedToken(TokenType.QuestionMark)) {
+                // We have an optional type
                 _ = self.next();
                 optional = true;
             }
@@ -797,6 +822,8 @@ pub fn typeName(self: *Parser) !NodeId {
                 token.span_start,
                 token.span_end,
             );
+        } else {
+            return try self.@"error"("expected: type name");
         }
     } else {
         return try self.@"error"("expect name");
@@ -818,11 +845,11 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) !NodeId {
 
     // Check for special forms
     if (self.isKeyword("if")) {
-        // TODO
+        unreachable;
     } else if (self.isKeyword("new") or self.isKeyword("local")) {
-        // TODO
+        unreachable;
     } else if (self.isKeyword("match")) {
-        // TODO
+        unreachable;
     }
 
     // Otherwise assume a math expression
@@ -865,7 +892,7 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) !NodeId {
             const rhs: NodeId = undefined;
             // TODO check for AstNode.As
             if (self.isSimpleExpression()) {
-                rhs = self.simpleExpression();
+                rhs = try self.simpleExpression();
             } else {
                 return try self.@"error"("incomplete math expression");
             }
@@ -943,13 +970,13 @@ pub fn simpleExpression(self: *Parser) !NodeId {
         self.rparen();
         expr = output;
     } else if (self.isKeyword("raw")) {
-        // TODO
+        unreachable;
     } else if (self.isKeyword("true") or self.isKeyword("false")) {
         expr = try self.boolean();
     } else if (self.isKeyword("none")) {
         expr = try self.none();
     } else if (self.isKeyword("new") or self.isKeyword("local")) {
-        // TODO
+        unreachable;
     } else if (self.isExpectedToken(TokenType.String)) {
         expr = try self.string();
     } else if (self.isExpectedToken(TokenType.CString)) {
@@ -961,20 +988,23 @@ pub fn simpleExpression(self: *Parser) !NodeId {
     } else if (self.isExpectedToken(TokenType.Name)) {
         expr = try self.variableOrCall();
     } else if (self.isExpectedToken(TokenType.Dot)) {
-        // TODO
+        unreachable;
     } else {
         return try self.@"error"("incomplete expression");
     }
 
     while (true) {
         if (self.isExpectedToken(TokenType.DotDot)) {
-            // TODO
+            // Range
+            unreachable;
         } else if (self.isExpectedToken(TokenType.Dot)) {
-            // TODO
+            // Member access
+            unreachable;
         } else if (self.isExpectedToken(TokenType.LSquare)) {
-            // TODO
+            // Indexing operation
+            unreachable;
         } else if (self.isExpectedToken(TokenType.ColonColon)) {
-            // TODO
+            unreachable;
         } else {
             return expr;
         }
@@ -1044,7 +1074,6 @@ pub fn variableOrCall(self: *Parser) !NodeId {
                             continue;
                         } else if (self.isExpectedToken(TokenType.RParen)) {
                             try args.append(val);
-                            self.rparen();
                             break;
                         } else if (self.isExpectedToken(TokenType.Colon)) {
                             // we have a name value
@@ -1091,7 +1120,7 @@ pub fn number(self: *Parser) !NodeId {
                 const span_end = self.getSpanEnd(remaining);
                 const contents = self.compiler.source[token.span_start..token.span_end];
 
-                if (std.mem.containsAtLeast(u8, contents, 1, '.')) {
+                if (std.mem.containsAtLeast(u8, contents, 1, ".")) {
                     return try self.createNode(AstNode.float, token.span_start, span_end);
                 } else {
                     return try self.createNode(AstNode.int, token.span_start, span_end);
@@ -1289,7 +1318,7 @@ pub fn name(self: *Parser) !NodeId {
     if (self.peek()) |token| {
         if (token.token_type == TokenType.Name) {
             _ = self.next();
-            return try self.createNode(AstNode.name{ .name = token.token_type }, token.span_start, token.span_end);
+            return try self.createNode(AstNode.name, token.span_start, token.span_end);
         } else {
             return try self.@"error"("expected: name");
         }
@@ -1495,7 +1524,7 @@ pub fn lexNumber(self: *Parser) ?Token {
     const span_start = self.current_file.span_offset;
     var span_position = span_start;
     while (span_position < self.currentFileEnd()) {
-        if (!self.compiler.source[span_position]) {
+        if (!isAsciiDigit(self.compiler.source[span_position])) {
             break;
         }
         span_position += 1;
