@@ -24,13 +24,6 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const lib_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const exe_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/main.zig"),
@@ -38,9 +31,17 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const integration_tests = b.addTest(.{
+        .root_source_file = b.path("src/integration_tests.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
+    const run_integation_tests = b.addRunArtifact(integration_tests);
 
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_lib_unit_tests.step);
+    const coverage_step = b.step("coverage", "Tests coverage");
     test_step.dependOn(&run_exe_unit_tests.step);
+    coverage_step.dependOn(&run_integation_tests.step);
 }
