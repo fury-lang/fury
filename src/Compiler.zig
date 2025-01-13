@@ -10,6 +10,7 @@ alloc: std.mem.Allocator,
 span_start: std.ArrayList(usize),
 span_end: std.ArrayList(usize),
 ast_node: std.ArrayList(Parser.AstNode),
+node_types: std.ArrayList(Typechecker.TypeId),
 
 // Blocks, indexed by BlockId
 blocks: std.ArrayList(Parser.Block),
@@ -28,6 +29,12 @@ types: std.ArrayList(Typechecker.Type),
 // indexed by ModuleId
 modules: std.ArrayList(Typechecker.Module),
 
+// Use/def
+call_resolution: std.AutoArrayHashMap(Parser.NodeId, CallTarget),
+var_resolution: std.AutoArrayHashMap(Parser.NodeId, Typechecker.VarId),
+fun_resolution: std.AutoArrayHashMap(Parser.NodeId, Typechecker.FuncId),
+type_resolution: std.AutoArrayHashMap(Parser.NodeId, Typechecker.TypeId),
+
 errors: std.ArrayList(Errors.SourceError),
 
 const File = struct {
@@ -36,12 +43,26 @@ const File = struct {
     end: usize,
 };
 
+pub const CaseOffset = usize;
+
+const EnumConstructor = struct {
+    type_id: Typechecker.TypeId,
+    case_offset: CaseOffset,
+};
+
+pub const CallTarget = union(enum) {
+    function: Typechecker.FuncId,
+    // enum_constructor:
+    node_id: Parser.NodeId,
+};
+
 pub fn new(alloc: std.mem.Allocator) Compiler {
     return Compiler{
         .alloc = alloc,
         .span_start = std.ArrayList(usize).init(alloc),
         .span_end = std.ArrayList(usize).init(alloc),
         .ast_node = std.ArrayList(Parser.AstNode).init(alloc),
+        .node_types = std.ArrayList(Typechecker.TypeId).init(alloc),
         .blocks = std.ArrayList(Parser.Block).init(alloc),
         .source = "",
         .file_offsets = std.ArrayList(File).init(alloc),
@@ -50,6 +71,10 @@ pub fn new(alloc: std.mem.Allocator) Compiler {
         .types = std.ArrayList(Typechecker.Type).init(alloc),
         .modules = std.ArrayList(Typechecker.Module).init(alloc),
         .errors = std.ArrayList(Errors.SourceError).init(alloc),
+        .call_resolution = std.AutoHashMap(Parser.NodeId, CallTarget).init(alloc),
+        .var_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.VarId).init(alloc),
+        .functions_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.FuncId).init(alloc),
+        .type_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.TypeId).init(alloc),
     };
 }
 
@@ -235,7 +260,111 @@ pub fn getSource(self: *Compiler, node_id: Parser.NodeId) []const u8 {
     return self.source[self.span_start.items[node_id]..self.span_end.items[node_id]];
 }
 
+pub fn getType(self: *Compiler, type_id: Typechecker.TypeId) Typechecker.Type {
+    return self.types.items[type_id];
+}
+
+pub fn getNodeType(self: *Compiler, node_id: Parser.NodeId) Parser.NodeId {
+    return self.node_types.items[node_id];
+}
+
+pub fn setNodeType(self: *Compiler, node_id: Parser.NodeId, type_id: Typechecker.TypeId) void {
+    self.node_types.items[node_id] = type_id;
+}
+
+pub fn getVariable(self: *Compiler, var_id: Typechecker.VarId) Typechecker.Variable {
+    return self.variables.items[var_id];
+}
+
 pub fn pushType(self: *Compiler, ty: Typechecker.Type) !Typechecker.TypeId {
     try self.types.append(ty);
     return self.types.items.len - 1;
+}
+
+pub fn resizeNodeTypes(self: *Compiler, size: usize, type_id: Typechecker.TypeId) !void {
+    const old_len = self.types.items.len;
+    try self.types.resize(size);
+    for (self.types.items, 0..) |*ty, idx| {
+        if (idx >= old_len) {
+            ty.* = type_id;
+        }
+    }
+}
+
+pub fn findOrCreateType(self: *Compiler, ty: Typechecker.Type) !Typechecker.TypeId {
+    for (self.types.items, 0..) |*t, idx| {
+        if (t.* == ty) {
+            return idx;
+        }
+    }
+
+    try self.pushType(ty);
+    return self.types.items.len - 1;
+}
+
+pub fn isTypeVariable(self: *Compiler, type_id: Typechecker.TypeId) bool {
+    const ty = self.compiler.types.items[type_id];
+    return switch (ty) {
+        .type_variable => true,
+        else => false,
+    };
+}
+
+pub fn resolveType(self: *Compiler, type_id: Typechecker.TypeId, local_inferences: *std.ArrayList(Typechecker.TypeId)) Typechecker.TypeId {
+    const ty = self.getType(type_id);
+    return switch (ty) {
+        .fun_local_type_val => |tt| local_inferences.items[tt.offset],
+        else => type_id,
+    };
+}
+
+pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) []const u8 {
+    switch (self.getType(type_id)) {
+        .bool => return "bool",
+        .c_char => return "c_char",
+        .c_external_type => |node_id| {
+            const s = std.fmt.allocPrint(self.alloc, "extern({s})", .{self.getSource(node_id)});
+            return s;
+        },
+        .c_int => return "c_int",
+        .c_size_t => return "c_size_t",
+        .c_string => return "c_string",
+        .c_void_ptr => return "c_void_ptr",
+        .@"enum" => {
+            //FIXME: give this a name
+            return "enum";
+        },
+        .fun => {
+            // TODO
+            return "fun pretty type not implemented";
+        },
+        .i64 => return "i64",
+        .pointer => |pt| {
+            var output: []const u8 = "";
+            switch (pt.pointer_type) {
+                .Owned => output = "owned ",
+                .Shared => output = "shared ",
+                else => {},
+            }
+            output = try std.fmt.allocPrint(self.alloc, "{s} {s}", .{ output, self.prettyType(pt.target) });
+            if (pt.optional) |_| {
+                output = try std.fmt.allocPrint(self.alloc, "{s}?", .{output});
+            }
+            return output;
+        },
+        .range => |id| {
+            return try std.fmt.allocPrint(self.alloc, "range({s})", .{self.prettyType(id)});
+        },
+        .raw_buffer => unreachable,
+        .@"struct" => unreachable,
+        .fun_local_type_val => |ty| {
+            return try std.fmt.allocPrint(self.alloc, "<local typevar: {d}", .{ty.offset});
+        },
+        .type_variable => |id| {
+            return try std.fmt.allocPrint(self.alloc, "<{d}>", .{self.getSource(id)});
+        },
+        .unknown => return "unknown",
+        .void => return "void",
+        else => return "pretty type not implemented",
+    }
 }
