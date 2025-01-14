@@ -28,10 +28,13 @@ pub fn main() !void {
     try compiler.addFile(file_name);
 
     var parser = Parser.new(alloc, compiler, span_offset);
-    var c = try parser.parse();
-    if (c.errors.items.len == 0) c.print();
+    const c = try parser.parse();
 
-    for (c.errors.items) |*err| {
-        try c.printErrors(err);
+    var typechecker = try Typechecker.new(alloc, c);
+    var c_new = try typechecker.typecheck();
+    if (c_new.errors.items.len == 0) c_new.print();
+
+    for (c_new.errors.items) |*err| {
+        try c_new.printErrors(err);
     }
 }

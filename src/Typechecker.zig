@@ -20,7 +20,7 @@ pub const ScopeId = usize;
 pub const ModuleId = usize;
 
 pub const TypeField = struct {
-    member_access: []const u8,
+    member_access: Parser.MemberAccess,
     name: []const u8,
     ty: TypeId,
     where_defined: Parser.NodeId,
@@ -28,7 +28,7 @@ pub const TypeField = struct {
 
 // pub const Void = usize;
 pub const Void = enum {
-    Void,
+    void,
 };
 
 pub const Type = union(enum) {
@@ -39,14 +39,17 @@ pub const Type = union(enum) {
     bool: Void,
     range: TypeId,
     raw_buffer: TypeId,
-    fun: struct { params: std.ArrayList(Param), ret: TypeId },
+    fun: struct {
+        params: std.ArrayList(Param),
+        ret: TypeId,
+    },
 
     c_int: Void,
     c_size_t: Void,
     c_void_ptr: Void,
     c_char: Void,
     c_string: Void,
-    c_external_type: Void,
+    c_external_type: Parser.NodeId,
 
     @"struct": struct {
         generic_params: std.ArrayList(TypeId),
@@ -125,7 +128,7 @@ pub const LifetimeAnnotation = union(enum) {
 };
 
 pub const Function = struct {
-    name: []const u8,
+    name: Parser.NodeId,
     params: std.ArrayList(Param),
     lifetime_annotations: std.ArrayList(LifetimeAnnotation),
     type_params: std.ArrayList(TypeParam),
@@ -181,7 +184,9 @@ pub const Scope = struct {
     }
 };
 
-pub const Module = struct { scope: Scope };
+pub const Module = struct {
+    scope: Scope,
+};
 
 pub const VarOrFuncId = union(enum) {
     var_id: VarId,
@@ -234,23 +239,25 @@ pub fn new(alloc: std.mem.Allocator, compiler: Compiler) !Typechecker {
     });
 
     // hardwire in the core types before the user-defined types
-    try typechecker.compiler.types.append(Type{ .unknown = Void });
-    try typechecker.compiler.types.append(Type{ .void = Void });
-    try typechecker.compiler.types.append(Type{ .i64 = Void });
-    try typechecker.compiler.types.append(Type{ .f64 = Void });
-    try typechecker.compiler.types.append(Type{ .bool = Void });
+    try typechecker.compiler.types.append(Type{ .unknown = Void.void });
+    try typechecker.compiler.types.append(Type{ .void = Void.void });
+    try typechecker.compiler.types.append(Type{ .i64 = Void.void });
+    try typechecker.compiler.types.append(Type{ .f64 = Void.void });
+    try typechecker.compiler.types.append(Type{ .bool = Void.void });
     try typechecker.compiler.types.append(Type{ .range = I64_TYPE_ID });
-    try typechecker.compiler.types.append(Type{ .c_int = Void });
-    try typechecker.compiler.types.append(Type{ .c_size_t = Void });
-    try typechecker.compiler.types.append(Type{ .c_void_ptr = Void });
-    try typechecker.compiler.types.append(Type{ .c_char = Void });
-    try typechecker.compiler.types.append(Type{ .c_string = Void });
+    try typechecker.compiler.types.append(Type{ .c_int = Void.void });
+    try typechecker.compiler.types.append(Type{ .c_size_t = Void.void });
+    try typechecker.compiler.types.append(Type{ .c_void_ptr = Void.void });
+    try typechecker.compiler.types.append(Type{ .c_char = Void.void });
+    try typechecker.compiler.types.append(Type{ .c_string = Void.void });
 
     var scope = std.ArrayList(Scope).init(alloc);
     try scope.append(Scope.new(alloc));
 
     const last = scope.items.len - 1;
     try scope.items[last].functions.put("println", 0);
+
+    typechecker.scope = scope;
 
     return typechecker;
 }
@@ -267,31 +274,31 @@ pub fn setUnsafe(self: *Typechecker) void {
     self.scope.items[last].setUnsafe();
 }
 
-pub fn unifyTypes(self: *Typechecker, lhs: TypeId, rhs: TypeId, local_inferences: *std.ArrayList(TypeId)) !bool {
+pub fn unifyTypes(self: *Typechecker, lhs: TypeId, rhs: TypeId, local_inferences: *std.ArrayList(TypeId)) bool {
     _ = local_inferences;
     const lhs_ty = self.compiler.getType(lhs);
     const rhs_ty = self.compiler.getType(rhs);
 
-    if (lhs_ty == @TypeOf(Type.fun_local_type_val)) {
+    if (@TypeOf(lhs_ty) == @TypeOf(Type.fun_local_type_val)) {
         unreachable;
-    } else if (rhs_ty == @TypeOf(Type.fun_local_type_val)) {
+    } else if (@TypeOf(rhs_ty) == @TypeOf(Type.fun_local_type_val)) {
         unreachable;
-    } else if (lhs_ty == @TypeOf(Type.pointer) and rhs_ty == @TypeOf(Type.pointer)) {
+    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.pointer) and @TypeOf(rhs_ty) == @TypeOf(Type.pointer)) {
         unreachable;
-    } else if (lhs_ty == @TypeOf(Type.raw_buffer) and rhs_ty == @TypeOf(Type.raw_buffer)) {
+    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.raw_buffer) and @TypeOf(rhs_ty) == @TypeOf(Type.raw_buffer)) {
         unreachable;
-    } else if (lhs_ty == @TypeOf(Type.fun) and rhs_ty == @TypeOf(Type.fun)) {
+    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.fun) and @TypeOf(rhs_ty) == @TypeOf(Type.fun)) {
         unreachable;
-    } else if (lhs_ty == @TypeOf(Type.c_int) and rhs_ty == @TypeOf(Type.i64)) {
+    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.c_int) and @TypeOf(rhs_ty) == @TypeOf(Type.i64)) {
         return true;
-    } else if (lhs_ty == @TypeOf(Type.i64) and rhs_ty == @TypeOf(Type.c_int)) {
+    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.i64) and @TypeOf(rhs_ty) == @TypeOf(Type.c_int)) {
         return true;
-    } else if (lhs_ty == @TypeOf(Type.i64) and rhs_ty == @TypeOf(Type.c_size_t)) {
+    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.i64) and @TypeOf(rhs_ty) == @TypeOf(Type.c_size_t)) {
         return true;
-    } else if (lhs_ty == @TypeOf(Type.c_size_t) and rhs_ty == @TypeOf(Type.i64)) {
+    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.c_size_t) and @TypeOf(rhs_ty) == @TypeOf(Type.i64)) {
         return true;
     } else {
-        return lhs_ty == rhs_ty;
+        return @TypeOf(lhs_ty) == @TypeOf(rhs_ty);
     }
 }
 
@@ -327,7 +334,7 @@ pub fn typecheckTypename(self: *Typechecker, node_id: Parser.NodeId) !TypeId {
                         return id;
                     } else {
                         // Assume custom types are pointers
-                        try self.compiler.findOrCreateType(Type{ .pointer = .{
+                        return try self.compiler.findOrCreateType(Type{ .pointer = .{
                             .pointer_type = pointer_type,
                             .optional = optional,
                             .target = id,
@@ -355,14 +362,13 @@ pub fn typecheckTypename(self: *Typechecker, node_id: Parser.NodeId) !TypeId {
 
             const typed_ret = try self.typecheckTypename(ret);
 
-            try self.compiler.findOrCreateType(Type.fun{
-                .params = typed_params,
-                .ret = typed_ret,
+            return try self.compiler.findOrCreateType(.{
+                .fun = .{ .params = typed_params, .ret = typed_ret },
             });
         },
         .raw_buffer => unreachable,
         else => {
-            const error_msg = try std.fmt.allocPrint(self.alloc, "expected type name {s}", .{self.compiler.getNode(node_id)});
+            const error_msg = try std.fmt.allocPrint(self.alloc, "expected type name {s}", .{self.compiler.getSource(node_id)});
             try self.@"error"(error_msg, node_id);
             return VOID_TYPE_ID;
         },
@@ -370,7 +376,7 @@ pub fn typecheckTypename(self: *Typechecker, node_id: Parser.NodeId) !TypeId {
 }
 
 pub fn typecheckCallWithNodeId(self: *Typechecker, name: Parser.NodeId, node_id: Parser.NodeId, args: *std.ArrayList(Parser.NodeId), local_inferences: *std.ArrayList(TypeId)) !TypeId {
-    var type_id = self.compiler.getNodeType(node_id);
+    var type_id = self.compiler.getNodeType(name);
     type_id = self.compiler.resolveType(type_id, local_inferences);
 
     const call_type = self.compiler.getType(type_id);
@@ -381,7 +387,7 @@ pub fn typecheckCallWithNodeId(self: *Typechecker, name: Parser.NodeId, node_id:
 
             try self.compiler.call_resolution.put(name, Compiler.CallTarget{ .node_id = node_id });
 
-            var type_var_replacements = std.AutoHashMap(TypeId, TypeId);
+            var type_var_replacements = std.AutoHashMap(TypeId, TypeId).init(self.alloc);
 
             try self.typecheckCallHelper(args, params, null, local_inferences, &type_var_replacements);
 
@@ -409,7 +415,7 @@ pub fn typecheckCallWithFunId(self: *Typechecker, name: Parser.NodeId, fun_id: F
     const params = fun.params;
     const return_type = fun.return_type;
 
-    var _args = undefined;
+    var _args: std.ArrayList(Parser.NodeId) = undefined;
     if (method_target) |method| {
         var output = std.ArrayList(Parser.NodeId).init(self.alloc);
         try output.append(method);
@@ -425,7 +431,7 @@ pub fn typecheckCallWithFunId(self: *Typechecker, name: Parser.NodeId, fun_id: F
 
         for (_args.items) |arg| {
             // TODO add name-checking
-            try self.typecheckNode(arg, local_inferences);
+            _ = try self.typecheckNode(arg, local_inferences);
         }
 
         return VOID_TYPE_ID;
@@ -448,11 +454,11 @@ pub fn typecheckCallWithFunId(self: *Typechecker, name: Parser.NodeId, fun_id: F
         try self.enterScope();
     }
 
-    var type_var_replacements = std.AutoHashMap(TypeId, TypeId);
-    try self.typecheckCallHelper(_args, params, method_target, local_inferences, &type_var_replacements);
+    var type_var_replacements = std.AutoHashMap(TypeId, TypeId).init(self.alloc);
+    try self.typecheckCallHelper(&_args, params, method_target, local_inferences, &type_var_replacements);
 
     const _fun_id = fun_id;
-    if (!type_var_replacements.Size == 0) {
+    if (!(type_var_replacements.count() == 0)) {
         // TODO generic fun
     }
 
@@ -461,7 +467,7 @@ pub fn typecheckCallWithFunId(self: *Typechecker, name: Parser.NodeId, fun_id: F
     try self.compiler.call_resolution.put(name, Compiler.CallTarget{ .function = _fun_id });
 
     if (method_target) |_| {
-        try self.exitScope();
+        self.exitScope();
     }
 
     if (self.compiler.isTypeVariable(return_type)) {
@@ -476,17 +482,15 @@ pub fn typecheckCallWithFunId(self: *Typechecker, name: Parser.NodeId, fun_id: F
     }
 }
 
-pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeId), params: std.ArrayList(Param), method_target: ?Parser.NodeId, local_inferences: *std.ArrayList(TypeId), type_var_replacements: *std.AutoArrayHashMap(TypeId, TypeId)) !TypeId {
+pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeId), params: std.ArrayList(Param), method_target: ?Parser.NodeId, local_inferences: *std.ArrayList(TypeId), type_var_replacements: *std.AutoHashMap(TypeId, TypeId)) !void {
     for (args.items, 0..) |arg, idx| {
         const arg_node = self.compiler.getNode(arg);
         switch (arg_node) {
             .named_value => unreachable,
-            _ => {
+            else => {
                 var arg_type: TypeId = undefined;
-                if (idx == 0) {
-                    if (method_target) |_| {
-                        arg_type = try self.compiler.getNodeType(arg);
-                    }
+                if (idx == 0 and method_target != null) {
+                    arg_type = self.compiler.getNodeType(arg);
                 } else {
                     arg_type = try self.typecheckNode(arg, local_inferences);
                 }
@@ -497,26 +501,27 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
 
                 const variable_ty = variable.ty;
                 const variable_node_id = variable.name;
+                _ = variable_node_id;
 
                 if (self.compiler.isTypeVariable(variable_ty)) {
                     if (type_var_replacements.get(variable_ty)) |replacement| {
                         if (self.unifyTypes(replacement, arg_type, local_inferences)) {} else {
                             const expected_type = self.compiler.resolveType(replacement, local_inferences);
-                            const fount_type = self.compiler.resolveType(arg_type, local_inferences);
-                            const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ expected_type, fount_type });
+                            const found_type = self.compiler.resolveType(arg_type, local_inferences);
+                            const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ try self.compiler.prettyType(expected_type), try self.compiler.prettyType(found_type) });
                             try self.@"error"(error_msg, arg);
 
                             // TODO add a note about where params are defined
                         }
                     } else {
-                        try type_var_replacements.put(variable_ty, arg_type);
+                        try type_var_replacements.put(self.compiler.getUnderlyingTypeId(variable_ty), self.compiler.getUnderlyingTypeId(arg_type));
                     }
                 } else if (self.unifyTypes(variable_ty, arg_type, local_inferences)) {}
                 // TODO check for subtype
                 else {
                     const expected_type = self.compiler.resolveType(variable_ty, local_inferences);
                     const found_type = self.compiler.resolveType(arg_type, local_inferences);
-                    const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ expected_type, found_type });
+                    const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ try self.compiler.prettyType(expected_type), try self.compiler.prettyType(found_type) });
                     try self.@"error"(error_msg, arg);
 
                     // TODO add a note about where params are defined
@@ -537,7 +542,7 @@ pub fn typecheckCall(self: *Typechecker, node_id: Parser.NodeId, head: Parser.No
 
     switch (self.compiler.getNode(head)) {
         .member_access => unreachable,
-        _ => {
+        else => {
             if (self.compiler.fun_resolution.get(head)) |fun_id| {
                 return try self.typecheckCallWithFunId(head, fun_id, args, null, local_inferences);
             } else {
@@ -549,6 +554,7 @@ pub fn typecheckCall(self: *Typechecker, node_id: Parser.NodeId, head: Parser.No
 }
 
 pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params: ?Parser.NodeId, params: Parser.NodeId, lifetime_annotations: *std.ArrayList(Parser.NodeId), return_ty: ?Parser.NodeId, initial_node_id: ?Parser.NodeId, block: ?Parser.NodeId, is_extern: bool) !FuncId {
+    _ = lifetime_annotations;
     var fun_params = std.ArrayList(Param).init(self.alloc);
     var fun_type_params = std.ArrayList(TypeParam).init(self.alloc);
     _ = &fun_type_params;
@@ -558,11 +564,12 @@ pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params:
     try self.enterScope();
 
     // TODO generic type params
+    if (type_params) |_| {}
 
     const _params = self.compiler.getNode(params);
     switch (_params) {
-        .params => {
-            for (_params.items) |unchecked_param| {
+        .params => |pm| {
+            for (pm.items) |unchecked_param| {
                 const _param = self.compiler.getNode(unchecked_param);
                 switch (_param) {
                     .param => |p| {
@@ -574,25 +581,35 @@ pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params:
                         const tt = try self.typecheckTypename(ty);
 
                         const var_id = try self.defineVariable(_name, tt, is_mutable, name);
-                        // self.compiler.setNodeType(_name, ty);
+                        self.compiler.setNodeType(_name, ty);
                         try fun_params.append(Param.new(_param_name, var_id));
                     },
                     else => try self.@"error"("expected function parameter", unchecked_param),
                 }
             }
         },
-        else => try self.@"error"("expected function parameters", _params),
+        else => try self.@"error"("expected function parameters", params),
     }
 
-    try self.exitScope();
+    const checked_lifetime_annotations = std.ArrayList(LifetimeAnnotation).init(self.alloc);
 
-    self.compiler.functions.append(Function{
+    // TODO typecheck lifetime annotations
+
+    var _return_ty = VOID_TYPE_ID;
+    if (return_ty) |ret_ty| {
+        _return_ty = try self.typecheckTypename(ret_ty);
+    }
+
+    self.exitScope();
+
+    try self.compiler.functions.append(Function{
         .name = name,
         .params = fun_params,
-        .lifetime_annotations = lifetime_annotations.*,
+        .lifetime_annotations = checked_lifetime_annotations,
         .type_params = fun_type_params,
         .inference_vars = std.ArrayList(TypeId).init(self.alloc),
-        .return_type = return_ty,
+        .return_node = return_ty,
+        .return_type = _return_ty,
         .initial_node_id = initial_node_id,
         .body = block,
         .is_extern = is_extern,
@@ -631,15 +648,15 @@ pub fn typecheckFun(self: *Typechecker, fun_id: FuncId) !void {
     }
 
     // Create our local inference variable list we'll use as we infer types
-    var local_inference = try std.ArrayList(TypeId).init(self.alloc);
+    var local_inference = std.ArrayList(TypeId).init(self.alloc);
 
     // Typecheck until we hit a fix point for our inferences
     while (true) {
         const before = local_inference.items;
 
-        try self.typecheckNode(fun.body.?, &local_inference);
+        _ = try self.typecheckNode(fun.body.?, &local_inference);
 
-        if (!self.compiler.errors.items.len == 0 or isListEqual(before, local_inference.items)) {
+        if (!(self.compiler.errors.items.len == 0) or isListEqual(before, local_inference.items)) {
             break;
         }
     }
@@ -655,7 +672,7 @@ pub fn typecheckFun(self: *Typechecker, fun_id: FuncId) !void {
         }
     }
 
-    try self.exitScope();
+    self.exitScope();
 
     const infer = &self.compiler.functions.items[fun_id];
     infer.*.inference_vars = local_inference;
@@ -680,9 +697,9 @@ pub fn typecheckBlock(self: *Typechecker, node_id: Parser.NodeId, block_id: Pars
 
                     continue;
                 }
-                try funs.append(try self.typecheckFunPredecl(f.name, f.type_params, f.params, &f.lifetime_annotations, f.return_ty, f.initial_node_id, f.block, f.is_extern));
+                try funs.append(try self.typecheckFunPredecl(f.name, f.type_params, f.params, @constCast(&f.lifetime_annotations), f.return_ty, f.initial_node_id, f.block, f.is_extern));
             },
-            else => unreachable,
+            else => {},
         }
     }
 
@@ -691,7 +708,7 @@ pub fn typecheckBlock(self: *Typechecker, node_id: Parser.NodeId, block_id: Pars
     }
 
     for (block.nodes.items) |id| {
-        try self.typecheckNode(id, local_inferences);
+        _ = try self.typecheckNode(id, local_inferences);
     }
 
     self.compiler.setNodeType(node_id, VOID_TYPE_ID);
@@ -699,30 +716,76 @@ pub fn typecheckBlock(self: *Typechecker, node_id: Parser.NodeId, block_id: Pars
     return self.scope.pop();
 }
 
-pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
-    var id: TypeId = undefined;
+pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) anyerror!TypeId {
+    var node_type: TypeId = undefined;
     switch (self.compiler.getNode(node_id)) {
         .block => |block_id| {
             _ = try self.typecheckBlock(node_id, block_id, local_inferences);
-            id = VOID_TYPE_ID;
+            node_type = VOID_TYPE_ID;
         },
-        .int => id = I64_TYPE_ID,
-        .float => id = F64_TYPE_ID,
-        .true, .false => id = BOOL_TYPE_ID,
-        .none => {},
+        .int => node_type = I64_TYPE_ID,
+        .float => node_type = F64_TYPE_ID,
+        .true, .false => node_type = BOOL_TYPE_ID,
+        .none => unreachable,
         .string => @panic("strings not yet supported"),
-        .c_char => id = C_CHAR_TYPE_ID,
-        .c_string => id = C_STRING_TYPE_ID,
+        .c_char => node_type = C_CHAR_TYPE_ID,
+        .c_string => node_type = C_STRING_TYPE_ID,
         .name => {
             // This looks like a variable, but may also be the name of a function
+            const var_or_fun_id = self.findNameInScope(node_id);
+            node_type = try self.typecheckVarOrFunction(node_id, var_or_fun_id);
         },
-        .call => {},
+        .call => |c| {
+            const head = c.head;
+            var args = c.args;
+            node_type = try self.typecheckCall(node_id, head, &args, local_inferences);
+        },
         // ignore here, since we checked this in an earlier pass
-        .fun, .@"struct", .@"enum", .expern_type => id = VOID_TYPE_ID,
+        .fun, .@"struct", .@"enum", .expern_type => node_type = VOID_TYPE_ID,
+        .statement => |stmt| {
+            _ = try self.typecheckNode(stmt, local_inferences);
+            node_type = VOID_TYPE_ID;
+        },
         else => unreachable,
     }
 
-    return id;
+    self.compiler.setNodeType(node_id, node_type);
+    return node_type;
+}
+
+pub fn typecheckVarOrFunction(self: *Typechecker, node_id: Parser.NodeId, var_or_fun_id: ?VarOrFuncId) !TypeId {
+    if (var_or_fun_id) |var_or_fun| {
+        switch (var_or_fun) {
+            .var_id => |var_id| {
+                // TODO check for variable move
+                try self.compiler.var_resolution.put(node_id, var_id);
+
+                const variable = self.compiler.getVariable(var_id);
+                return variable.ty;
+            },
+            .fun_id => |fun_id| {
+                const fun = self.compiler.functions.items[fun_id];
+
+                try self.compiler.fun_resolution.put(node_id, fun_id);
+
+                if (fun_id != 0) {
+                    return try self.compiler.findOrCreateType(.{ .fun = .{ .params = fun.params, .ret = fun.return_type } });
+                } else {
+                    return UNKNOWN_TYPE_ID;
+                }
+            },
+        }
+    } else {
+        const name = self.compiler.getSource(node_id);
+
+        // Reserved name for synthetic self variables
+        if (std.mem.eql(u8, name, ".")) {
+            try self.@"error"("can't find 'self' variable", node_id);
+        } else {
+            try self.@"error"("can't find variable", node_id);
+        }
+        return UNKNOWN_TYPE_ID;
+    }
 }
 
 pub fn typecheck(self: *Typechecker) !Compiler {
@@ -731,18 +794,20 @@ pub fn typecheck(self: *Typechecker) !Compiler {
 
     const top_level: Parser.NodeId = num_nodes - 1;
     // Top-level local inferences
-    var local_inference = try std.ArrayList(TypeId).init(self.alloc);
+    var local_inference = std.ArrayList(TypeId).init(self.alloc);
 
     // Typecheck until we hit a fix point for our inferences
     while (true) {
         const before = local_inference.items;
 
-        try self.typecheckNode(top_level, &local_inference);
+        _ = try self.typecheckNode(top_level, &local_inference);
 
-        if (!self.compiler.errors.items.len == 0 or isListEqual(before, local_inference.items)) {
+        if (!(self.compiler.errors.items.len == 0) or isListEqual(before, local_inference.items)) {
             break;
         }
     }
+
+    return self.compiler;
 }
 
 pub fn addVariableToScope(self: *Typechecker, name: []const u8, var_id: VarId) !void {
@@ -763,7 +828,7 @@ pub fn addModuleToScope(self: *Typechecker, path: []const u8, module_id: ModuleI
 pub fn defineVariable(self: *Typechecker, name: Parser.NodeId, ty: TypeId, is_mutable: bool, where_defined: Parser.NodeId) !VarId {
     const variable_name = self.compiler.getSource(name);
     try self.compiler.variables.append(.{
-        .name = variable_name,
+        .name = name,
         .ty = ty,
         .is_mutable = is_mutable,
         .where_defined = where_defined,
@@ -784,9 +849,9 @@ pub fn findNameInScope(self: *Typechecker, name: Parser.NodeId) ?VarOrFuncId {
         name_str = "self";
     }
 
-    var i: usize = self.scope.items.len - 1;
+    var i: i32 = @intCast(self.scope.items.len - 1);
     while (i >= 0) : (i -= 1) {
-        if (self.scope.items[i].findName(name_str)) |v| {
+        if (self.scope.items[@intCast(i)].findName(name_str)) |v| {
             return v;
         }
     }
@@ -802,7 +867,7 @@ pub fn findVariableInScope(self: *Typechecker, var_name: Parser.NodeId) ?VarId {
         name = "self";
     }
 
-    var i: usize = self.scope.items.len - 1;
+    var i: i32 = @intCast(self.scope.items.len - 1);
     while (i >= 0) : (i -= 1) {
         if (self.scope.variables.get(name)) |var_id| {
             return var_id;
@@ -815,9 +880,9 @@ pub fn findVariableInScope(self: *Typechecker, var_name: Parser.NodeId) ?VarId {
 pub fn findTypeInScope(self: *Typechecker, type_name: Parser.NodeId) ?TypeId {
     const name = self.compiler.getSource(type_name);
 
-    var i: usize = self.scope.items.len - 1;
+    var i: i32 = @intCast(self.scope.items.len - 1);
     while (i >= 0) : (i -= 1) {
-        if (self.scope.items[i].findType(name)) |type_id| {
+        if (self.scope.items[@intCast(i)].findType(name)) |type_id| {
             return type_id;
         }
     }
@@ -826,9 +891,9 @@ pub fn findTypeInScope(self: *Typechecker, type_name: Parser.NodeId) ?TypeId {
 }
 
 pub fn findTypeInScopeByName(self: *Typechecker, name: []const u8) ?TypeId {
-    var i: usize = self.scope.items.len - 1;
+    var i: i32 = @intCast(self.scope.items.len - 1);
     while (i >= 0) : (i -= 1) {
-        if (self.scope.items[i].types.get(name)) |type_id| {
+        if (self.scope.items[@intCast(i)].types.get(name)) |type_id| {
             return type_id;
         }
     }
@@ -837,9 +902,9 @@ pub fn findTypeInScopeByName(self: *Typechecker, name: []const u8) ?TypeId {
 }
 
 pub fn findExpectedReturnType(self: *Typechecker) ?TypeId {
-    var i: usize = self.scope.items.len - 1;
+    var i: i32 = @intCast(self.scope.items.len - 1);
     while (i >= 0) : (i -= 1) {
-        if (self.scope.items[i].expected_return_type) |ret_type| {
+        if (self.scope.items[@intCast(i)].expected_return_type) |ret_type| {
             return ret_type;
         }
     }
@@ -849,7 +914,7 @@ pub fn findExpectedReturnType(self: *Typechecker) ?TypeId {
 
 pub fn setExpectedReturnType(self: *Typechecker, expected_type: TypeId) !void {
     const frame = &self.scope.getLast();
-    frame.*.expected_return_type = expected_type;
+    @constCast(frame).*.expected_return_type = expected_type;
 }
 
 pub fn isBindingMutable(self: *Typechecker, node_id: Parser.NodeId) bool {
@@ -891,13 +956,13 @@ pub fn enterScope(self: *Typechecker) !void {
 }
 
 pub fn exitScope(self: *Typechecker) void {
-    self.scope.pop();
+    _ = self.scope.pop();
 }
 
 pub fn isListEqual(a: []TypeId, b: []TypeId) bool {
     if (a.len != b.len) return false;
 
-    for (a, 0..) |*a_item, i| {
+    for (a, 0..) |a_item, i| {
         if (a_item != b[i]) return false;
     }
 

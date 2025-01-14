@@ -30,10 +30,10 @@ types: std.ArrayList(Typechecker.Type),
 modules: std.ArrayList(Typechecker.Module),
 
 // Use/def
-call_resolution: std.AutoArrayHashMap(Parser.NodeId, CallTarget),
-var_resolution: std.AutoArrayHashMap(Parser.NodeId, Typechecker.VarId),
-fun_resolution: std.AutoArrayHashMap(Parser.NodeId, Typechecker.FuncId),
-type_resolution: std.AutoArrayHashMap(Parser.NodeId, Typechecker.TypeId),
+call_resolution: std.AutoHashMap(Parser.NodeId, CallTarget),
+var_resolution: std.AutoHashMap(Parser.NodeId, Typechecker.VarId),
+fun_resolution: std.AutoHashMap(Parser.NodeId, Typechecker.FuncId),
+type_resolution: std.AutoHashMap(Parser.NodeId, Typechecker.TypeId),
 
 errors: std.ArrayList(Errors.SourceError),
 
@@ -73,7 +73,7 @@ pub fn new(alloc: std.mem.Allocator) Compiler {
         .errors = std.ArrayList(Errors.SourceError).init(alloc),
         .call_resolution = std.AutoHashMap(Parser.NodeId, CallTarget).init(alloc),
         .var_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.VarId).init(alloc),
-        .functions_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.FuncId).init(alloc),
+        .fun_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.FuncId).init(alloc),
         .type_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.TypeId).init(alloc),
     };
 }
@@ -281,10 +281,18 @@ pub fn pushType(self: *Compiler, ty: Typechecker.Type) !Typechecker.TypeId {
     return self.types.items.len - 1;
 }
 
+pub fn getUnderlyingTypeId(self: *Compiler, type_id: Typechecker.TypeId) Typechecker.TypeId {
+    const ty = self.getType(type_id);
+    return switch (ty) {
+        .pointer => |pt| pt.target,
+        else => type_id,
+    };
+}
+
 pub fn resizeNodeTypes(self: *Compiler, size: usize, type_id: Typechecker.TypeId) !void {
-    const old_len = self.types.items.len;
-    try self.types.resize(size);
-    for (self.types.items, 0..) |*ty, idx| {
+    const old_len = self.node_types.items.len;
+    try self.node_types.resize(size);
+    for (self.node_types.items, 0..) |*ty, idx| {
         if (idx >= old_len) {
             ty.* = type_id;
         }
@@ -293,17 +301,17 @@ pub fn resizeNodeTypes(self: *Compiler, size: usize, type_id: Typechecker.TypeId
 
 pub fn findOrCreateType(self: *Compiler, ty: Typechecker.Type) !Typechecker.TypeId {
     for (self.types.items, 0..) |*t, idx| {
-        if (t.* == ty) {
+        if (@TypeOf(t.*) == @TypeOf(ty)) {
             return idx;
         }
     }
 
-    try self.pushType(ty);
+    _ = try self.pushType(ty);
     return self.types.items.len - 1;
 }
 
 pub fn isTypeVariable(self: *Compiler, type_id: Typechecker.TypeId) bool {
-    const ty = self.compiler.types.items[type_id];
+    const ty = self.types.items[type_id];
     return switch (ty) {
         .type_variable => true,
         else => false,
@@ -318,12 +326,12 @@ pub fn resolveType(self: *Compiler, type_id: Typechecker.TypeId, local_inference
     };
 }
 
-pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) []const u8 {
+pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
     switch (self.getType(type_id)) {
         .bool => return "bool",
         .c_char => return "c_char",
         .c_external_type => |node_id| {
-            const s = std.fmt.allocPrint(self.alloc, "extern({s})", .{self.getSource(node_id)});
+            const s = try std.fmt.allocPrint(self.alloc, "extern({s})", .{self.getSource(node_id)});
             return s;
         },
         .c_int => return "c_int",
@@ -346,14 +354,14 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) []const u8 {
                 .Shared => output = "shared ",
                 else => {},
             }
-            output = try std.fmt.allocPrint(self.alloc, "{s} {s}", .{ output, self.prettyType(pt.target) });
-            if (pt.optional) |_| {
+            output = try std.fmt.allocPrint(self.alloc, "{s} {s}", .{ output, try self.prettyType(pt.target) });
+            if (pt.optional) {
                 output = try std.fmt.allocPrint(self.alloc, "{s}?", .{output});
             }
             return output;
         },
         .range => |id| {
-            return try std.fmt.allocPrint(self.alloc, "range({s})", .{self.prettyType(id)});
+            return try std.fmt.allocPrint(self.alloc, "range({s})", .{try self.prettyType(id)});
         },
         .raw_buffer => unreachable,
         .@"struct" => unreachable,
@@ -361,7 +369,7 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) []const u8 {
             return try std.fmt.allocPrint(self.alloc, "<local typevar: {d}", .{ty.offset});
         },
         .type_variable => |id| {
-            return try std.fmt.allocPrint(self.alloc, "<{d}>", .{self.getSource(id)});
+            return try std.fmt.allocPrint(self.alloc, "<{s}>", .{self.getSource(id)});
         },
         .unknown => return "unknown",
         .void => return "void",
