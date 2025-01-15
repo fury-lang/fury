@@ -807,6 +807,33 @@ pub fn typecheck(self: *Typechecker) !Compiler {
         }
     }
 
+    const top_level_type = self.compiler.getNodeType(top_level);
+
+    // If we haven't seen a main, create one from the top-level node
+    if (!self.compiler.hasMain()) {
+        // Synthesis of a fake 'main' node
+        const new_source = try std.fmt.allocPrint(self.alloc, "{s}main", .{self.compiler.source});
+        self.compiler.source = new_source;
+        const main_node = try self.compiler.pushNode(Parser.AstNode{ .name = Parser.Void.void });
+        try self.compiler.span_start.append(self.compiler.source.len - 4);
+        try self.compiler.span_end.append(self.compiler.source.len);
+        // re-resize to make sure we have enough nodes
+        try self.compiler.resizeNodeTypes(main_node + 1, UNKNOWN_TYPE_ID);
+
+        try self.compiler.functions.append(Function{
+            .name = main_node,
+            .params = std.ArrayList(Param).init(self.alloc),
+            .type_params = std.ArrayList(TypeParam).init(self.alloc),
+            .lifetime_annotations = std.ArrayList(LifetimeAnnotation).init(self.alloc),
+            .inference_vars = local_inference,
+            .return_type = top_level_type,
+            .return_node = null,
+            .initial_node_id = num_nodes,
+            .body = top_level,
+            .is_extern = false,
+        });
+    }
+
     return self.compiler;
 }
 

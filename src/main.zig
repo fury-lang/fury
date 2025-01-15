@@ -39,7 +39,7 @@ pub fn main() !void {
         try c_new.printErrors(err);
     }
 
-    var codegen = try Codegen.new(alloc, compiler);
+    var codegen = try Codegen.new(alloc, c_new);
     const output = try codegen.codegen();
 
     var output_file = try std.fs.cwd().createFile("output.c", .{});

@@ -35,7 +35,7 @@ pub const RequiredLifetime = enum {
 
 pub const ASSIGNMENT_PRECEDENCE: usize = 10;
 
-const Void = enum {
+pub const Void = enum {
     void,
 };
 

@@ -96,6 +96,23 @@ pub fn print(self: *Compiler) void {
     for (self.blocks.items, 0..) |block, block_id| {
         std.debug.print("{d} {any}\n", .{ block_id, block });
     }
+
+    std.debug.print("Variables:\n", .{});
+    for (self.variables.items, 0..) |_var, var_id| {
+        std.debug.print("{d} {any}\n", .{ var_id, _var });
+    }
+
+    std.debug.print("Functions:\n", .{});
+    for (self.functions.items, 0..) |fun, fun_id| {
+        std.debug.print("{d} {any}\n", .{ fun_id, fun });
+    }
+
+    std.debug.print("Types:\n", .{});
+    for (self.types.items, 0..) |ty, ty_id| {
+        std.debug.print("{d} {any}\n", .{ ty_id, ty });
+    }
+
+    // std.debug.print("Call resolution:\n", .{});
 }
 
 pub fn printErrors(self: *Compiler, err: *Errors.SourceError) !void {
@@ -281,6 +298,15 @@ pub fn pushType(self: *Compiler, ty: Typechecker.Type) !Typechecker.TypeId {
     return self.types.items.len - 1;
 }
 
+pub fn hasMain(self: *Compiler) bool {
+    for (self.functions.items) |fun| {
+        if (std.mem.eql(u8, self.getSource(fun.name), "main")) {
+            return true;
+        }
+    }
+    return false;
+}
+
 pub fn getUnderlyingTypeId(self: *Compiler, type_id: Typechecker.TypeId) Typechecker.TypeId {
     const ty = self.getType(type_id);
     return switch (ty) {
@@ -324,6 +350,14 @@ pub fn resolveType(self: *Compiler, type_id: Typechecker.TypeId, local_inference
         .fun_local_type_val => |tt| local_inferences.items[tt.offset],
         else => type_id,
     };
+}
+
+pub fn resolveNodeType(self: *Compiler, node_id: Parser.NodeId, local_inferences: *std.ArrayList(Typechecker.TypeId)) Typechecker.TypeId {
+    switch (self.types.items[self.node_types.items[node_id]]) {
+        .fun_local_type_val => |ty| return local_inferences.items[ty.offset],
+        .raw_buffer => unreachable,
+        else => return self.node_types.items[node_id],
+    }
 }
 
 pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
