@@ -223,7 +223,7 @@ pub const AstNode = union(enum) {
     new: struct {
         pointer_type: PointerType,
         required_lifetime: RequiredLifetime,
-        name: NodeId,
+        allocated: NodeId,
     },
     @"defer": struct {
         pointer: NodeId,
@@ -566,9 +566,9 @@ pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
         } else if (self.isKeyword("extern")) {
             unreachable;
         } else if (self.isKeyword("struct")) {
-            unreachable;
+            try curr_body.append(try self.classStructDefinition(false));
         } else if (self.isKeyword("class")) {
-            unreachable;
+            try curr_body.append(try self.classStructDefinition(true));
         } else if (self.isKeyword("enum")) {
             unreachable;
         } else if (self.isKeyword("use")) {
@@ -869,7 +869,7 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
     if (self.isKeyword("if")) {
         unreachable;
     } else if (self.isKeyword("new") or self.isKeyword("local")) {
-        unreachable;
+        return try self.newAllocation();
     } else if (self.isKeyword("match")) {
         unreachable;
     }
@@ -997,7 +997,7 @@ pub fn simpleExpression(self: *Parser) anyerror!NodeId {
     } else if (self.isKeyword("none")) {
         expr = try self.none();
     } else if (self.isKeyword("new") or self.isKeyword("local")) {
-        unreachable;
+        expr = try self.newAllocation();
     } else if (self.isExpectedToken(TokenType.String)) {
         expr = try self.string();
     } else if (self.isExpectedToken(TokenType.CString)) {
@@ -1130,6 +1130,86 @@ pub fn forStatement(self: *Parser) !NodeId {
     );
 }
 
+pub fn classStructDefinition(self: *Parser, private_by_default: bool) !NodeId {
+    var fields = std.ArrayList(NodeId).init(self.alloc);
+    var methods = std.ArrayList(NodeId).init(self.alloc);
+
+    const span_start = self.position();
+    var span_end = self.position();
+
+    if (private_by_default) {
+        _ = try self._keyword("class");
+    } else {
+        _ = try self._keyword("struct");
+    }
+
+    var explicit_no_alloc = false;
+    if (self.isKeyword("noalloc")) {
+        _ = self.next();
+        explicit_no_alloc = true;
+    }
+
+    const _name = try self.typeName();
+
+    // inheritance
+    var base_class: ?NodeId = null;
+    if (self.isExpectedToken(TokenType.Colon)) {
+        _ = try self.colon();
+        base_class = try self.typeName();
+    }
+
+    try self.lcurly();
+
+    // parse fields
+    while (self.hasTokens()) {
+        if (self.isExpectedToken(TokenType.RCurly)) {
+            span_end = self.position() + 1;
+            try self.rcurly();
+            break;
+        }
+
+        if (self.isKeyword("fun")) {
+            const fun = try self.funDefinition();
+            try methods.append(fun);
+        } else if (self.isExpectedToken(TokenType.Newline)) {
+            _ = self.newLine();
+        } else {
+            // field
+            var member_access = MemberAccess.Public;
+            if (self.isKeyword("private")) {
+                _ = self.next();
+                member_access = MemberAccess.Private;
+            } else if (self.isKeyword("public")) {
+                _ = self.next();
+                member_access = MemberAccess.Public;
+            } else if (private_by_default) {
+                member_access = MemberAccess.Private;
+            }
+
+            const field_name = try self.name();
+            try self.colon();
+            const field_type = try self.typeName();
+            if (self.isExpectedToken(TokenType.Comma)) {
+                _ = try self.comma();
+            }
+
+            const field = try self.createNode(
+                .{ .field = .{ .member_access = member_access, .name = field_name, .typename = field_type } },
+                span_start,
+                span_end,
+            );
+
+            try fields.append(field);
+        }
+    }
+
+    return try self.createNode(
+        .{ .@"struct" = .{ .typename = _name, .fields = fields, .methods = methods, .explicit_no_alloc = explicit_no_alloc, .base_class = base_class } },
+        span_start,
+        span_end,
+    );
+}
+
 pub fn variable(self: *Parser) !NodeId {
     if (self.isExpectedToken(TokenType.Name)) {
         const _name = self.next().?;
@@ -1168,9 +1248,24 @@ pub fn variableOrCall(self: *Parser) !NodeId {
                             try args.append(val);
                             break;
                         } else if (self.isExpectedToken(TokenType.Colon)) {
-                            // we have a name value
-                            // TODO
-                            _ = value_start;
+                            // we have a named value
+                            try self.colon();
+                            const name0 = val;
+                            const value = try self.expression();
+                            const value_end = self.position();
+
+                            try args.append(try self.createNode(
+                                .{ .named_value = .{ .name = name0, .value = value } },
+                                value_start,
+                                value_end,
+                            ));
+
+                            if (self.isExpectedToken(TokenType.Comma)) {
+                                try self.comma();
+                                continue;
+                            } else if (self.isExpectedToken(TokenType.RParen)) {
+                                break;
+                            }
                         } else {
                             try args.append(val);
                             try args.append(try self.@"error"("unexpected value in call arguments"));
@@ -1193,6 +1288,45 @@ pub fn variableOrCall(self: *Parser) !NodeId {
     } else {
         return try self.@"error"("expected: variable or call");
     }
+}
+
+pub fn newAllocation(self: *Parser) !NodeId {
+    const span_start = self.position();
+
+    var required_lifetime = RequiredLifetime.Unknown;
+    if (self.isKeyword("local")) {
+        try self._keyword("local");
+        required_lifetime = RequiredLifetime.Local;
+    } else {
+        try self._keyword("new");
+        if (self.isExpectedToken(TokenType.LParen)) {
+            try self.lparen();
+            if (self.isKeyword("local")) {
+                try self._keyword("local");
+                required_lifetime = RequiredLifetime.Local;
+            } else {
+                return try self.@"error"("unknown lifetime specifier");
+            }
+            try self.rparen();
+        } else {
+            required_lifetime = RequiredLifetime.Unknown;
+        }
+    }
+
+    var pointer_type = PointerType.Shared;
+    if (self.isKeyword("owned")) {
+        _ = self.next();
+        pointer_type = PointerType.Owned;
+    }
+
+    const allocated = try self.variableOrCall();
+    const span_end = self.getSpanEnd(allocated);
+
+    return try self.createNode(
+        .{ .new = .{ .pointer_type = pointer_type, .required_lifetime = required_lifetime, .allocated = allocated } },
+        span_start,
+        span_end,
+    );
 }
 
 pub fn number(self: *Parser) !NodeId {
@@ -1599,7 +1733,7 @@ pub fn lexQuotedString(self: *Parser) ?Token {
 }
 
 pub fn lexQuotedCString(self: *Parser) ?Token {
-    const span_start = self.current_file.span_offset;
+    const span_start = self.current_file.span_offset + 1;
     var span_position = span_start + 1;
     var is_excaped = false;
     while (span_position < self.currentFileEnd()) {
@@ -1611,6 +1745,7 @@ pub fn lexQuotedCString(self: *Parser) ?Token {
             span_position += 1;
             break;
         }
+
         span_position += 1;
     }
 
