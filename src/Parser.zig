@@ -1386,7 +1386,7 @@ pub fn resizeStatement(self: *Parser) !NodeId {
     const span_end = self.getSpanEnd(new_size);
 
     return try self.createNode(.{
-        .resize = .{ .pointer = pointer, .new_size = new_size },
+        .resize_buffer = .{ .pointer = pointer, .new_size = new_size },
     }, span_start, span_end);
 }
 
@@ -1398,7 +1398,7 @@ pub fn unsafeBlock(self: *Parser) !NodeId {
     const _block = try self.block(true);
     const span_end = self.getSpanEnd(_block);
 
-    return try self.createNode(.{ .unsafe = _block }, span_start, span_end);
+    return try self.createNode(.{ .unsage_block = _block }, span_start, span_end);
 }
 
 pub fn rawBuffer(self: *Parser) !NodeId {
