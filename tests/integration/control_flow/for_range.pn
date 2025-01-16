@@ -5,4 +5,6 @@ for i in 1..10 {
     total += i
 }
 
-println(total)
+// program out of bound error without semicolon
+// we got no statement node for the next line
+println(total);

@@ -544,7 +544,7 @@ pub fn program(self: *Parser) !NodeId {
     return try self.block(false);
 }
 
-pub fn block(self: *Parser, expect_curly_braces: bool) !NodeId {
+pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
     const span_start = self.position();
     var span_end = self.position();
 
@@ -576,11 +576,11 @@ pub fn block(self: *Parser, expect_curly_braces: bool) !NodeId {
         } else if (self.isKeyword("let")) {
             try curr_body.append(try self.letStatement());
         } else if (self.isKeyword("mut")) {
-            unreachable;
+            try curr_body.append(try self.mutStatement());
         } else if (self.isKeyword("while")) {
-            unreachable;
+            try curr_body.append(try self.whileStatement());
         } else if (self.isKeyword("for")) {
-            unreachable;
+            try curr_body.append(try self.forStatement());
         } else if (self.isKeyword("return")) {
             unreachable;
         } else if (self.isKeyword("break")) {
@@ -979,9 +979,8 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
     return expr_stack.items[0];
 }
 
-pub fn simpleExpression(self: *Parser) !NodeId {
+pub fn simpleExpression(self: *Parser) anyerror!NodeId {
     const span_start = self.position();
-    _ = span_start;
 
     var expr: NodeId = undefined;
     if (self.isExpectedToken(TokenType.LCurly)) {
@@ -1018,7 +1017,16 @@ pub fn simpleExpression(self: *Parser) !NodeId {
     while (true) {
         if (self.isExpectedToken(TokenType.DotDot)) {
             // Range
-            unreachable;
+            _ = self.next();
+
+            const rhs = try self.simpleExpression();
+            const span_end = self.getSpanEnd(rhs);
+
+            expr = try self.createNode(
+                .{ .range = .{ .lhs = expr, .rhs = rhs } },
+                span_start,
+                span_end,
+            );
         } else if (self.isExpectedToken(TokenType.Dot)) {
             // Member access
             unreachable;
@@ -1031,6 +1039,8 @@ pub fn simpleExpression(self: *Parser) !NodeId {
             return expr;
         }
     }
+
+    return expr;
 }
 
 pub fn letStatement(self: *Parser) !NodeId {
@@ -1055,6 +1065,66 @@ pub fn letStatement(self: *Parser) !NodeId {
 
     return try self.createNode(
         .{ .let = .{ .variable_name = variable_name, .ty = ty, .initializer = initializer, .is_mutable = is_mutable } },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn mutStatement(self: *Parser) !NodeId {
+    const is_mutable = true;
+    const span_start = self.position();
+
+    try self._keyword("mut");
+
+    const variable_name = try self.variable();
+
+    var ty: ?NodeId = null;
+    if (self.isExpectedToken(TokenType.Colon)) {
+        try self.colon();
+        ty = try self.typeName();
+    }
+
+    try self.equals();
+
+    const initializer = try self.expression();
+
+    const span_end = self.getSpanEnd(initializer);
+
+    return try self.createNode(
+        .{ .let = .{ .variable_name = variable_name, .ty = ty, .initializer = initializer, .is_mutable = is_mutable } },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn whileStatement(self: *Parser) !NodeId {
+    const span_start = self.position();
+    try self._keyword("while");
+
+    const condition = try self.expression();
+    const _block = try self.block(true);
+    const span_end = self.getSpanEnd(_block);
+
+    return try self.createNode(
+        .{ .@"while" = .{ .condition = condition, .block = _block } },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn forStatement(self: *Parser) !NodeId {
+    const span_start = self.position();
+    try self._keyword("for");
+
+    const _variable = try self.variable();
+    try self._keyword("in");
+
+    const range = try self.simpleExpression();
+    const _block = try self.block(true);
+    const span_end = self.getSpanEnd(_block);
+
+    return try self.createNode(
+        .{ .@"for" = .{ .variable = _variable, .range = range, .block = _block } },
         span_start,
         span_end,
     );
@@ -1705,15 +1775,47 @@ pub fn lexSymbol(self: *Parser) ?Token {
             .span_end = span_start + 1,
         },
         // skip ++, +=, --, -=, **, *=, //, /=, ==, !=, :: for now
-        '+' => Token{
-            .token_type = TokenType.Plus,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        '+' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '+') {
+                break :tok Token{
+                    .token_type = TokenType.PlusPlus,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '=') {
+                break :tok Token{
+                    .token_type = TokenType.PlusEquals,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.Plus,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
-        '-' => Token{
-            .token_type = TokenType.Minus,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        '-' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '>') {
+                break :tok Token{
+                    .token_type = TokenType.ThinArrow,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '=') {
+                break :tok Token{
+                    .token_type = TokenType.DashEquals,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.Dash,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
         '*' => Token{
             .token_type = TokenType.Multiply,
@@ -1740,11 +1842,20 @@ pub fn lexSymbol(self: *Parser) ?Token {
             .span_start = span_start,
             .span_end = span_start + 1,
         },
-        // skip .. for now
-        '.' => Token{
-            .token_type = TokenType.Dot,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        '.' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '.') {
+                break :tok Token{
+                    .token_type = TokenType.DotDot,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.Dot,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
         '!' => Token{
             .token_type = TokenType.Exclamation,
@@ -1835,4 +1946,30 @@ fn isAsciiDigit(c: u8) bool {
 
 fn isAsciiHexDigit(c: u8) bool {
     return isAsciiDigit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
+}
+
+test "Parser quick test" {
+    const alloc = std.heap.page_allocator;
+
+    const file_name: []const u8 = "tests/integration/variables/variable_mutation.pn";
+
+    const file = try std.fs.cwd().openFile(file_name, .{});
+    defer file.close();
+
+    const file_size = try file.getEndPos();
+    const source = try alloc.alloc(u8, file_size);
+    _ = try file.read(source);
+
+    var compiler = Compiler.new(alloc);
+    const span_offset = compiler.spanOffset();
+    try compiler.addFile(file_name);
+
+    var parser = Parser.new(alloc, compiler, span_offset);
+    var c = try parser.parse();
+
+    if (c.errors.items.len == 0) c.print();
+
+    for (c.errors.items) |*err| {
+        try c.printErrors(err);
+    }
 }

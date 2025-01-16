@@ -87,7 +87,6 @@ pub fn print(self: *Compiler) void {
 
     std.debug.print("Nodes:\n", .{});
     std.debug.print("num nodes: {}\n", .{self.ast_node.items.len});
-    std.debug.print("{any}\n", .{self.ast_node.getLast()});
     for (self.ast_node.items, 0..) |node, node_id| {
         std.debug.print("{d} {any}\n", .{ node_id, node });
     }

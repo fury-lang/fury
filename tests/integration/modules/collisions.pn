@@ -1,5 +1,5 @@
 // output: 123123
-// RUST_LOG: panin::parser[use_statement]=debug,panin::typechecker[typecheck_namespaced_lookup]=debug,panin::typechecker[typecheck_module]=debug
+// RUST_LOG: panin::Parser[use_statement]=debug,panin::typechecker[typecheck_namespaced_lookup]=debug,panin::typechecker[typecheck_module]=debug
 
 fun say_message(message: i64) {
     println(message)
