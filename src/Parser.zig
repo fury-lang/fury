@@ -582,15 +582,15 @@ pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
         } else if (self.isKeyword("for")) {
             try curr_body.append(try self.forStatement());
         } else if (self.isKeyword("return")) {
-            unreachable;
+            try curr_body.append(try self.returnStatement());
         } else if (self.isKeyword("break")) {
-            unreachable;
+            try curr_body.append(try self.breakStatement());
         } else if (self.isKeyword("defer")) {
-            unreachable;
+            try curr_body.append(try self.deferStatement());
         } else if (self.isKeyword("resize")) {
-            unreachable;
+            try curr_body.append(try self.resizeStatement());
         } else if (self.isKeyword("unsafe")) {
-            unreachable;
+            try curr_body.append(try self.unsafeBlock());
         } else {
             const _span_start = self.position();
             const expr = try self.expressionOrAssignment();
@@ -991,7 +991,7 @@ pub fn simpleExpression(self: *Parser) anyerror!NodeId {
         try self.rparen();
         expr = output;
     } else if (self.isKeyword("raw")) {
-        unreachable;
+        expr = try self.rawBuffer();
     } else if (self.isKeyword("true") or self.isKeyword("false")) {
         expr = try self.boolean();
     } else if (self.isKeyword("none")) {
@@ -1324,6 +1324,109 @@ pub fn newAllocation(self: *Parser) !NodeId {
 
     return try self.createNode(
         .{ .new = .{ .pointer_type = pointer_type, .required_lifetime = required_lifetime, .allocated = allocated } },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn returnStatement(self: *Parser) !NodeId {
+    const span_start = self.position();
+    var span_end: usize = undefined;
+
+    try self._keyword("return");
+
+    var ret_val: ?NodeId = null;
+    if (self.isExpression()) {
+        ret_val = try self.expression();
+        span_end = self.getSpanEnd(ret_val.?);
+    } else {
+        span_end = span_start + 6;
+    }
+
+    return try self.createNode(
+        .{ .@"return" = ret_val },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn breakStatement(self: *Parser) !NodeId {
+    const span_start = self.position();
+    const span_end = span_start + 5;
+
+    try self._keyword("break");
+
+    return try self.createNode(.{ .@"break" = Void.void }, span_start, span_end);
+}
+
+pub fn deferStatement(self: *Parser) !NodeId {
+    const span_start = self.position();
+
+    try self._keyword("defer");
+
+    const pointer = try self.variable();
+    const callback = try self.expression();
+
+    const span_end = self.getSpanEnd(callback);
+
+    return try self.createNode(.{
+        .@"defer" = .{ .pointer = pointer, .callback = callback },
+    }, span_start, span_end);
+}
+
+pub fn resizeStatement(self: *Parser) !NodeId {
+    const span_start = self.position();
+
+    //FIXME: note this syntax is likely going to change. It's here as a placeholder.
+    try self._keyword("resize");
+
+    const pointer = try self.simpleExpression();
+    const new_size = try self.simpleExpression();
+
+    const span_end = self.getSpanEnd(new_size);
+
+    return try self.createNode(.{
+        .resize = .{ .pointer = pointer, .new_size = new_size },
+    }, span_start, span_end);
+}
+
+pub fn unsafeBlock(self: *Parser) !NodeId {
+    const span_start = self.position();
+
+    try self._keyword("unsafe");
+
+    const _block = try self.block(true);
+    const span_end = self.getSpanEnd(_block);
+
+    return try self.createNode(.{ .unsafe = _block }, span_start, span_end);
+}
+
+pub fn rawBuffer(self: *Parser) !NodeId {
+    const span_start = self.position();
+    var span_end: usize = undefined;
+    try self._keyword("raw");
+
+    var param_list = std.ArrayList(NodeId).init(self.alloc);
+    try self.lparen();
+
+    while (self.hasTokens()) {
+        if (self.isExpectedToken(TokenType.RParen)) {
+            break;
+        }
+
+        if (self.isExpectedToken(TokenType.Comma)) {
+            _ = self.next();
+            continue;
+        }
+
+        try param_list.append(try self.simpleExpression());
+    }
+
+    span_end = self.position() + 1;
+    try self.rparen();
+
+    return try self.createNode(
+        .{ .raw_buffer = param_list },
         span_start,
         span_end,
     );
