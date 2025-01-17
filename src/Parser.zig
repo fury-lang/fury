@@ -570,7 +570,7 @@ pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
         } else if (self.isKeyword("class")) {
             try curr_body.append(try self.classStructDefinition(true));
         } else if (self.isKeyword("enum")) {
-            unreachable;
+            try curr_body.append(try self.enumDefinition());
         } else if (self.isKeyword("use")) {
             unreachable;
         } else if (self.isKeyword("let")) {
@@ -808,8 +808,22 @@ pub fn paramList(self: *Parser) !std.ArrayList(NodeId) {
 
 pub fn typeName(self: *Parser) !NodeId {
     if (self.isKeyword("raw")) {
-        // TODO
-        unreachable;
+        // Buffer typename
+        // FIXME: this should probably be an array or vector once we support them
+        try self._keyword("raw");
+        const span_start = self.position();
+        try self.lsquare();
+
+        const _name = try self.typeName();
+        const span_end = self.getSpanEnd(_name);
+
+        try self.rsquare();
+
+        return try self.createNode(
+            .{ .raw_buffer_type = .{ .inner = _name } },
+            span_start,
+            span_end,
+        );
     }
 
     var pointer_type = PointerType.Unknown;
@@ -871,7 +885,7 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
     } else if (self.isKeyword("new") or self.isKeyword("local")) {
         return try self.newAllocation();
     } else if (self.isKeyword("match")) {
-        unreachable;
+        return try self.matchExpression();
     }
 
     // Otherwise assume a math expression
@@ -1009,7 +1023,14 @@ pub fn simpleExpression(self: *Parser) anyerror!NodeId {
     } else if (self.isExpectedToken(TokenType.Name)) {
         expr = try self.variableOrCall();
     } else if (self.isExpectedToken(TokenType.Dot)) {
-        unreachable;
+        const _span_start = self.position();
+        const span_end = self.position() + 1;
+
+        expr = try self.createNode(
+            .{ .name = Void.void },
+            _span_start,
+            span_end,
+        );
     } else {
         return try self.@"error"("incomplete expression");
     }
@@ -1029,12 +1050,67 @@ pub fn simpleExpression(self: *Parser) anyerror!NodeId {
             );
         } else if (self.isExpectedToken(TokenType.Dot)) {
             // Member access
-            unreachable;
+            _ = self.next();
+
+            const prev_offset = self.current_file.span_offset;
+            const _name = try self.name();
+
+            var field_or_call = _name;
+            if (self.isExpectedToken(TokenType.LParen)) {
+                self.current_file.span_offset = prev_offset;
+                field_or_call = try self.variableOrCall();
+            }
+
+            const span_end = self.getSpanEnd(field_or_call);
+            switch (self.compiler.getNode(field_or_call)) {
+                .name => {
+                    expr = try self.createNode(
+                        .{ .member_access = .{ .target = expr, .field = field_or_call } },
+                        span_start,
+                        span_end,
+                    );
+                },
+                .call => |call| {
+                    expr = try self.createNode(
+                        .{ .member_access = .{ .target = expr, .field = call.head } },
+                        span_start,
+                        span_end,
+                    );
+                    expr = try self.createNode(
+                        .{ .call = .{ .head = expr, .args = call.args } },
+                        span_start,
+                        span_end,
+                    );
+                },
+                else => {
+                    return try self.@"error"("expected field or method call");
+                },
+            }
         } else if (self.isExpectedToken(TokenType.LSquare)) {
             // Indexing operation
-            unreachable;
+            _ = self.next();
+
+            const item = try self.expression();
+            const span_end = self.position() + 1;
+            try self.rsquare();
+
+            expr = try self.createNode(
+                .{ .index = .{ .target = expr, .index = item } },
+                span_start,
+                span_end,
+            );
         } else if (self.isExpectedToken(TokenType.ColonColon)) {
-            unreachable;
+            // Namespaced lookup
+            _ = self.next();
+
+            const item = try self.simpleExpression();
+            const span_end = self.getSpanEnd(item);
+
+            expr = try self.createNode(
+                .{ .namespaced_lookup = .{ .namespace = expr, .item = item } },
+                span_start,
+                span_end,
+            );
         } else {
             return expr;
         }
@@ -1205,6 +1281,143 @@ pub fn classStructDefinition(self: *Parser, private_by_default: bool) !NodeId {
 
     return try self.createNode(
         .{ .@"struct" = .{ .typename = _name, .fields = fields, .methods = methods, .explicit_no_alloc = explicit_no_alloc, .base_class = base_class } },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn enumDefinition(self: *Parser) !NodeId {
+    var cases = std.ArrayList(NodeId).init(self.alloc);
+    var methods = std.ArrayList(NodeId).init(self.alloc);
+
+    const span_start = self.position();
+    var span_end = self.position();
+
+    _ = try self._keyword("enum");
+
+    const _name = try self.typeName();
+    try self.lcurly();
+
+    // parse fields
+    while (self.hasTokens()) {
+        if (self.isExpectedToken(TokenType.RCurly)) {
+            span_end = self.position() + 1;
+            try self.rcurly();
+            break;
+        }
+
+        if (self.isKeyword("fun")) {
+            const fun = try self.funDefinition();
+            try methods.append(fun);
+        } else if (self.isExpectedToken(TokenType.Newline)) {
+            _ = self.newLine();
+        } else {
+            // enum case
+            const case = try self.enumCase();
+            try cases.append(case);
+        }
+    }
+
+    return try self.createNode(
+        .{ .@"enum" = .{ .typename = _name, .cases = cases, .methods = methods } },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn enumCase(self: *Parser) !NodeId {
+    const span_start = self.position();
+    const _name = try self.name();
+    var span_end = self.getSpanEnd(_name);
+
+    var payload: ?std.ArrayList(NodeId) = std.ArrayList(NodeId).init(self.alloc);
+    if (self.isExpectedToken(TokenType.LParen)) {
+        _ = self.next();
+        const payload_name = try self.name();
+        if (!self.isExpectedToken(TokenType.RParen)) {
+            _ = try self.@"error"("expected right paren ')'");
+        } else {
+            _ = self.next();
+        }
+        try payload.?.append(payload_name);
+    } else if (self.isExpectedToken(TokenType.LCurly)) {
+        try self.lcurly();
+        while (self.hasTokens()) {
+            if (self.isExpectedToken(TokenType.RCurly)) {
+                span_end = self.position() + 1;
+                try self.rcurly();
+                break;
+            }
+
+            // field
+            const _span_start = self.position();
+            const field_name = try self.name();
+            try self.colon();
+            const field_type = try self.typeName();
+            if (self.isExpectedToken(TokenType.Comma)) {
+                _ = try self.comma();
+            }
+
+            const named_field = try self.createNode(
+                .{ .named_value = .{ .name = field_name, .value = field_type } },
+                _span_start,
+                span_end,
+            );
+            try payload.?.append(named_field);
+        }
+    } else {
+        payload = null;
+    }
+
+    return try self.createNode(
+        .{ .enum_case = .{ .name = _name, .payload = payload } },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn matchExpression(self: *Parser) !NodeId {
+    const span_start = self.position();
+    var span_end: usize = undefined;
+
+    try self._keyword("match");
+
+    const target = try self.expression();
+
+    var match_arms = std.ArrayList([2]NodeId).init(self.alloc);
+
+    if (!self.isExpectedToken(TokenType.LCurly)) {
+        return try self.@"error"("expected left curly brace '{'");
+    }
+
+    try self.lcurly();
+
+    while (true) {
+        if (self.isExpectedToken(TokenType.RCurly)) {
+            span_end = self.position() + 1;
+            try self.rcurly();
+            break;
+        } else if (self.isSimpleExpression()) {
+            const pattern = try self.simpleExpression();
+
+            if (!self.isExpectedToken(TokenType.ThickArrow)) {
+                return try self.@"error"("expected thick arrow (=>) between match cases");
+            }
+
+            _ = self.next();
+
+            const pattern_result = try self.simpleExpression();
+
+            try match_arms.append([2]NodeId{ pattern, pattern_result });
+        } else if (self.isExpectedToken(TokenType.Newline)) {
+            _ = self.newLine();
+        } else {
+            return try self.@"error"("expected match arm in match");
+        }
+    }
+
+    return try self.createNode(
+        .{ .match = .{ .target = target, .match_arms = match_arms } },
         span_start,
         span_end,
     );
