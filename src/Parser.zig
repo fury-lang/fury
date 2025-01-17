@@ -564,7 +564,7 @@ pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
         } else if (self.isKeyword("fun")) {
             try curr_body.append(try self.funDefinition());
         } else if (self.isKeyword("extern")) {
-            unreachable;
+            try curr_body.append(try self.externDefinition());
         } else if (self.isKeyword("struct")) {
             try curr_body.append(try self.classStructDefinition(false));
         } else if (self.isKeyword("class")) {
@@ -619,6 +619,60 @@ pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
         span_start,
         span_end,
     );
+}
+
+pub fn externDefinition(self: *Parser) !NodeId {
+    const span_start = self.position();
+
+    try self._keyword("extern");
+
+    if (self.isKeyword("type")) {
+        try self._keyword("type");
+
+        const _name = try self.name();
+        const _span_start = self.compiler.span_start.items[_name];
+        const span_end = self.compiler.span_end.items[_name];
+
+        return try self.createNode(
+            .{ .expern_type = .{ .name = _name } },
+            _span_start,
+            span_end,
+        );
+    } else {
+        // Assume "C" for now?
+        _ = try self.string();
+
+        try self._keyword("fun");
+
+        const _name = try self.name();
+        const _params = try self.params();
+
+        var span_end: usize = undefined;
+
+        var return_ty: ?NodeId = null;
+        if (self.isExpectedToken(TokenType.ThinArrow)) {
+            _ = self.next();
+            return_ty = try self.typeName();
+            span_end = self.getSpanEnd(return_ty.?);
+        } else {
+            span_end = self.getSpanEnd(_params);
+        }
+
+        return try self.createNode(
+            .{ .fun = .{
+                .name = _name,
+                .type_params = null,
+                .params = _params,
+                .lifetime_annotations = std.ArrayList(NodeId).init(self.alloc),
+                .return_ty = return_ty,
+                .initial_node_id = null,
+                .block = null,
+                .is_extern = true,
+            } },
+            span_start,
+            span_end,
+        );
+    }
 }
 
 pub fn funDefinition(self: *Parser) anyerror!NodeId {
