@@ -1985,11 +1985,26 @@ pub fn lexSymbol(self: *Parser) ?Token {
             .span_start = span_start,
             .span_end = span_start + 1,
         },
-        // skip <=, << for now
-        '<' => Token{
-            .token_type = TokenType.LessThan,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        '<' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '=') {
+                break :tok Token{
+                    .token_type = TokenType.LessThanEqual,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '<') {
+                break :tok Token{
+                    .token_type = TokenType.LessThanLessThan,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.LessThan,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
         ')' => Token{
             .token_type = TokenType.RParen,
@@ -2006,13 +2021,27 @@ pub fn lexSymbol(self: *Parser) ?Token {
             .span_start = span_start,
             .span_end = span_start + 1,
         },
-        // skip >=, >> for now
-        '>' => Token{
-            .token_type = TokenType.GreaterThan,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        '>' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '=') {
+                break :tok Token{
+                    .token_type = TokenType.GreaterThanEqual,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '>') {
+                break :tok Token{
+                    .token_type = TokenType.GreaterThanGreaterThan,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.GreaterThan,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
-        // skip ++, +=, --, -=, **, *=, //, /=, ==, !=, :: for now
         '+' => tok: {
             if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '+') {
                 break :tok Token{
@@ -2055,25 +2084,89 @@ pub fn lexSymbol(self: *Parser) ?Token {
                 };
             }
         },
-        '*' => Token{
-            .token_type = TokenType.Multiply,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        '*' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '=') {
+                break :tok Token{
+                    .token_type = TokenType.AsteriskEquals,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '*') {
+                break :tok Token{
+                    .token_type = TokenType.AsteriskAsterisk,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.Asterisk,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
-        '/' => Token{
-            .token_type = TokenType.Divide,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        '/' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '=') {
+                break :tok Token{
+                    .token_type = TokenType.ForwardSlashEquals,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '/') {
+                break :tok Token{
+                    .token_type = TokenType.ForwardSlashForwardSlash,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.ForwardSlash,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
-        '=' => Token{
-            .token_type = TokenType.Equals,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        '=' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '=') {
+                break :tok Token{
+                    .token_type = TokenType.EqualsEquals,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '~') {
+                break :tok Token{
+                    .token_type = TokenType.EqualsTilde,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '>') {
+                break :tok Token{
+                    .token_type = TokenType.ThickArrow,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.Equals,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
-        ':' => Token{
-            .token_type = TokenType.Colon,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        ':' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == ':') {
+                break :tok Token{
+                    .token_type = TokenType.ColonColon,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.Colon,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
         ';' => Token{
             .token_type = TokenType.Semicolon,
@@ -2095,20 +2188,56 @@ pub fn lexSymbol(self: *Parser) ?Token {
                 };
             }
         },
-        '!' => Token{
-            .token_type = TokenType.Exclamation,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        '!' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '=') {
+                break :tok Token{
+                    .token_type = TokenType.ExclamationEquals,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '~') {
+                break :tok Token{
+                    .token_type = TokenType.ExclamationTilde,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.Exclamation,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
-        '|' => Token{
-            .token_type = TokenType.Pipe,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        '|' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '|') {
+                break :tok Token{
+                    .token_type = TokenType.PipePipe,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.Pipe,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
-        '&' => Token{
-            .token_type = TokenType.Ampersand,
-            .span_start = span_start,
-            .span_end = span_start + 1,
+        '&' => tok: {
+            if (self.current_file.span_offset < (self.currentFileEnd() - 1) and self.compiler.source[self.current_file.span_offset + 1] == '&') {
+                break :tok Token{
+                    .token_type = TokenType.AmpersandAmpersand,
+                    .span_start = span_start,
+                    .span_end = span_start + 2,
+                };
+            } else {
+                break :tok Token{
+                    .token_type = TokenType.Ampersand,
+                    .span_start = span_start,
+                    .span_end = span_start + 1,
+                };
+            }
         },
         ',' => Token{
             .token_type = TokenType.Comma,
