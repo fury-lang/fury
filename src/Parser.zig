@@ -703,8 +703,24 @@ pub fn funDefinition(self: *Parser) anyerror!NodeId {
             } else if (self.isExpectedToken(TokenType.Comma)) {
                 _ = self.next();
             } else if (self.isExpectedToken(TokenType.Name)) {
-                // TODO
-                _ = &lifetime_annotations;
+                var lhs = try self.variable();
+                if (self.isKeyword("return")) {
+                    lhs = try self.returnLifetime();
+                }
+
+                const op = try self.equalsEquals();
+
+                var rhs = try self.variable();
+                if (self.isKeyword("return")) {
+                    rhs = try self.returnLifetime();
+                }
+
+                const _span_start = self.compiler.span_start.items[lhs];
+                const _span_end = self.compiler.span_start.items[rhs];
+
+                try lifetime_annotations.append(
+                    try self.createNode(.{ .binary_op = .{ .left = lhs, .op = op, .right = rhs } }, _span_start, _span_end),
+                );
             } else {
                 _ = try self.@"error"("expected: lifetime annotation");
                 break;
@@ -860,7 +876,7 @@ pub fn paramList(self: *Parser) !std.ArrayList(NodeId) {
     return _params;
 }
 
-pub fn typeName(self: *Parser) !NodeId {
+pub fn typeName(self: *Parser) anyerror!NodeId {
     if (self.isKeyword("raw")) {
         // Buffer typename
         // FIXME: this should probably be an array or vector once we support them
@@ -889,8 +905,7 @@ pub fn typeName(self: *Parser) !NodeId {
     if (self.peek()) |token| {
         if (token.token_type == TokenType.Name) {
             if (std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], "fun")) {
-                // TODO
-                unreachable;
+                return try self.funTypename();
             }
 
             const _name = try self.name();
@@ -918,6 +933,36 @@ pub fn typeName(self: *Parser) !NodeId {
     } else {
         return try self.@"error"("expect name");
     }
+}
+
+pub fn funTypename(self: *Parser) !NodeId {
+    const span_start = self.position();
+    try self._keyword("fun");
+
+    try self.lparen();
+
+    var _params = std.ArrayList(NodeId).init(self.alloc);
+
+    while (true) {
+        if (self.isExpectedToken(TokenType.RParen)) {
+            try self.rparen();
+            break;
+        } else {
+            try _params.append(try self.typeName());
+        }
+    }
+
+    // FIXME: allow no arrow if there's no return type
+    try self.thinArrow();
+
+    const return_ty = try self.typeName();
+    const span_end = self.getSpanEnd(return_ty);
+
+    return try self.createNode(
+        .{ .fun_type = .{ .params = _params, .ret = return_ty } },
+        span_start,
+        span_end,
+    );
 }
 
 pub fn expressionOrAssignment(self: *Parser) !NodeId {
@@ -980,8 +1025,9 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
             }
 
             var rhs: NodeId = undefined;
-            // TODO check for AstNode.As
-            if (self.isSimpleExpression()) {
+            if (@TypeOf(self.compiler.getNode(op)) == @TypeOf(AstNode.as)) {
+                rhs = try self.typeName();
+            } else if (self.isSimpleExpression()) {
                 rhs = try self.simpleExpression();
             } else {
                 return try self.@"error"("incomplete math expression");
@@ -1955,6 +2001,30 @@ pub fn name(self: *Parser) !NodeId {
         }
     } else {
         return try self.@"error"("expected: name");
+    }
+}
+
+pub fn returnLifetime(self: *Parser) !NodeId {
+    if (self.isKeyword("return")) {
+        const _name = self.next().?;
+        const name_start = _name.span_start;
+        const name_end = _name.span_end;
+        return try self.createNode(.{ .return_lifetime = Void.void }, name_start, name_end);
+    } else {
+        return try self.@"error"("expected: 'return' lifetime");
+    }
+}
+
+pub fn equalsEquals(self: *Parser) !NodeId {
+    if (self.peek()) |token| {
+        if (token.token_type == TokenType.EqualsEquals) {
+            _ = self.next();
+            return try self.createNode(AstNode{ .equals = Void.void }, token.span_start, token.span_end);
+        } else {
+            return try self.@"error"("expected: equals equals '=='");
+        }
+    } else {
+        return try self.@"error"("expected: equals equals '=='");
     }
 }
 
