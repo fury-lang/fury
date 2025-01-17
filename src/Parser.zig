@@ -935,7 +935,7 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
 
     // Check for special forms
     if (self.isKeyword("if")) {
-        unreachable;
+        return self.ifExpression();
     } else if (self.isKeyword("new") or self.isKeyword("local")) {
         return try self.newAllocation();
     } else if (self.isKeyword("match")) {
@@ -1472,6 +1472,31 @@ pub fn matchExpression(self: *Parser) !NodeId {
 
     return try self.createNode(
         .{ .match = .{ .target = target, .match_arms = match_arms } },
+        span_start,
+        span_end,
+    );
+}
+
+pub fn ifExpression(self: *Parser) !NodeId {
+    const span_start = self.position();
+    var span_end: usize = undefined;
+
+    try self._keyword("if");
+
+    const condition = try self.expression();
+    const then_block = try self.block(true);
+
+    var else_block: ?NodeId = null;
+    if (self.isKeyword("else")) {
+        _ = self.next();
+        else_block = try self.expression();
+        span_end = self.getSpanEnd(else_block.?);
+    } else {
+        span_end = self.getSpanEnd(then_block);
+    }
+
+    return try self.createNode(
+        .{ .@"if" = .{ .condition = condition, .then_block = then_block, .else_expression = else_block } },
         span_start,
         span_end,
     );
