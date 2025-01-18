@@ -275,30 +275,39 @@ pub fn setUnsafe(self: *Typechecker) void {
 }
 
 pub fn unifyTypes(self: *Typechecker, lhs: TypeId, rhs: TypeId, local_inferences: *std.ArrayList(TypeId)) bool {
-    _ = local_inferences;
     const lhs_ty = self.compiler.getType(lhs);
     const rhs_ty = self.compiler.getType(rhs);
 
-    if (@TypeOf(lhs_ty) == @TypeOf(Type.fun_local_type_val)) {
+    if (std.mem.eql(u8, @tagName(lhs_ty), "fun_local_type_val")) {
+        if (local_inferences.items[lhs_ty.fun_local_type_val.offset] == UNKNOWN_TYPE_ID) {
+            local_inferences.*.items[lhs_ty.fun_local_type_val.offset] = rhs;
+            return true;
+        } else {
+            return self.unifyTypes(local_inferences.items[lhs_ty.fun_local_type_val.offset], rhs, local_inferences);
+        }
+    } else if (std.mem.eql(u8, @tagName(rhs_ty), "fun_local_type_val")) {
+        if (local_inferences.items[rhs_ty.fun_local_type_val.offset] == UNKNOWN_TYPE_ID) {
+            local_inferences.*.items[rhs_ty.fun_local_type_val.offset] = lhs;
+            return true;
+        } else {
+            return self.unifyTypes(lhs, local_inferences.items[rhs_ty.fun_local_type_val.offset], local_inferences);
+        }
+    } else if (std.mem.eql(u8, @tagName(lhs_ty), "pointer") and std.mem.eql(u8, @tagName(rhs_ty), "pointer")) {
         unreachable;
-    } else if (@TypeOf(rhs_ty) == @TypeOf(Type.fun_local_type_val)) {
+    } else if (std.mem.eql(u8, @tagName(lhs_ty), "raw_buffer") and std.mem.eql(u8, @tagName(rhs_ty), "raw_buffer")) {
         unreachable;
-    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.pointer) and @TypeOf(rhs_ty) == @TypeOf(Type.pointer)) {
+    } else if (std.mem.eql(u8, @tagName(lhs_ty), "fun") and std.mem.eql(u8, @tagName(rhs_ty), "fun")) {
         unreachable;
-    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.raw_buffer) and @TypeOf(rhs_ty) == @TypeOf(Type.raw_buffer)) {
-        unreachable;
-    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.fun) and @TypeOf(rhs_ty) == @TypeOf(Type.fun)) {
-        unreachable;
-    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.c_int) and @TypeOf(rhs_ty) == @TypeOf(Type.i64)) {
+    } else if (std.mem.eql(u8, @tagName(lhs_ty), "c_int") and std.mem.eql(u8, @tagName(rhs_ty), "i64")) {
         return true;
-    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.i64) and @TypeOf(rhs_ty) == @TypeOf(Type.c_int)) {
+    } else if (std.mem.eql(u8, @tagName(lhs_ty), "i64") and std.mem.eql(u8, @tagName(rhs_ty), "c_int")) {
         return true;
-    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.i64) and @TypeOf(rhs_ty) == @TypeOf(Type.c_size_t)) {
+    } else if (std.mem.eql(u8, @tagName(lhs_ty), "i64") and std.mem.eql(u8, @tagName(rhs_ty), "c_size_t")) {
         return true;
-    } else if (@TypeOf(lhs_ty) == @TypeOf(Type.c_size_t) and @TypeOf(rhs_ty) == @TypeOf(Type.i64)) {
+    } else if (std.mem.eql(u8, @tagName(lhs_ty), "c_size_t") and std.mem.eql(u8, @tagName(rhs_ty), "i64")) {
         return true;
     } else {
-        return @TypeOf(lhs_ty) == @TypeOf(rhs_ty);
+        return std.meta.eql(lhs_ty, rhs_ty);
     }
 }
 
@@ -730,6 +739,162 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
         .string => @panic("strings not yet supported"),
         .c_char => node_type = C_CHAR_TYPE_ID,
         .c_string => node_type = C_STRING_TYPE_ID,
+        .let => |let_stmt| {
+            const variable_name = let_stmt.variable_name;
+            const initializer = let_stmt.initializer;
+            const is_mutable = let_stmt.is_mutable;
+            const ty = let_stmt.ty;
+
+            var initializer_type = try self.typecheckNode(initializer, local_inferences);
+            initializer_type = self.compiler.resolveType(initializer_type, local_inferences);
+
+            // TODO check for variable moves
+
+            var var_id: VarId = undefined;
+            if (ty) |_ty| {
+                const tt = try self.typecheckTypename(_ty);
+                if (!self.unifyTypes(tt, initializer_type, local_inferences)) {
+                    const error_msg = try std.fmt.allocPrint(self.alloc, "initializer and given type do not match (expected: {s}, found: {s})", .{ try self.compiler.prettyType(tt), try self.compiler.prettyType(initializer_type) });
+                    try self.@"error"(error_msg, initializer);
+                }
+
+                if (self.compiler.var_resolution.get(variable_name)) |v_id| {
+                    const var_name = self.compiler.getSource(variable_name);
+                    try self.addVariableToScope(var_name, v_id);
+
+                    var_id = v_id;
+                } else {
+                    var_id = try self.defineVariable(variable_name, tt, is_mutable, node_id);
+                }
+            } else {
+                const node_type_id = self.compiler.getNodeType(variable_name);
+                var _ty: TypeId = undefined;
+                switch (node_type_id) {
+                    UNKNOWN_TYPE_ID => {
+                        const tt = try self.compiler.findOrCreateType(.{
+                            .fun_local_type_val = .{ .offset = local_inferences.items.len },
+                        });
+
+                        try local_inferences.*.append(UNKNOWN_TYPE_ID);
+                        self.compiler.setNodeType(variable_name, tt);
+
+                        _ty = tt;
+                    },
+                    else => {
+                        _ty = node_type_id;
+                    },
+                }
+
+                var tt = self.compiler.resolveType(_ty, local_inferences);
+                if (tt == UNKNOWN_TYPE_ID) {
+                    tt = _ty;
+                } else {
+                    tt = self.compiler.resolveType(_ty, local_inferences);
+                }
+
+                if (!self.unifyTypes(tt, initializer_type, local_inferences)) {
+                    const error_msg = try std.fmt.allocPrint(self.alloc, "initializer and given type do not match (expected: {s}, found: {s})", .{ try self.compiler.prettyType(tt), try self.compiler.prettyType(initializer_type) });
+                    try self.@"error"(error_msg, initializer);
+                }
+
+                const var_res = self.compiler.var_resolution.get(variable_name);
+                if (var_res) |v_res| {
+                    const var_name = self.compiler.getSource(variable_name);
+                    try self.addVariableToScope(var_name, v_res);
+
+                    var_id = v_res;
+                } else {
+                    var_id = try self.defineVariable(variable_name, tt, is_mutable, node_id);
+                }
+            }
+
+            try self.compiler.var_resolution.put(variable_name, var_id);
+
+            node_type = VOID_TYPE_ID;
+        },
+        .binary_op => |bin_op| {
+            const lhs = bin_op.left;
+            const op = bin_op.op;
+            const rhs = bin_op.right;
+
+            switch (self.compiler.getNode(op)) {
+                .plus, .minus, .multiply, .divide, .shift_left, .shift_right, .bitwise_and, .bitwise_or => {
+                    const lhs_ty = try self.typecheckNode(lhs, local_inferences);
+                    const rhs_ty = try self.typecheckNode(rhs, local_inferences);
+
+                    if (!self.unifyTypes(lhs_ty, rhs_ty, local_inferences)) {
+                        const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during binary operation. expected: {s}, found: {s}", .{ try self.compiler.prettyType(lhs_ty), try self.compiler.prettyType(rhs_ty) });
+                        try self.@"error"(error_msg, op);
+                    }
+
+                    node_type = lhs_ty;
+                },
+                .equals, .not_equals => {
+                    const lhs_ty = try self.typecheckNode(lhs, local_inferences);
+
+                    // use a quick inference for comparison with 'none'
+                    if (@TypeOf(self.compiler.getNode(rhs)) == @TypeOf(Parser.AstNode.none)) {
+                        self.compiler.setNodeType(rhs, lhs_ty);
+                    }
+
+                    const rhs_ty = try self.typecheckNode(rhs, local_inferences);
+                    if (!self.unifyTypes(lhs_ty, rhs_ty, local_inferences)) {
+                        const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during operation. expected: {s}, found: {s}", .{ try self.compiler.prettyType(lhs_ty), try self.compiler.prettyType(rhs_ty) });
+                        try self.@"error"(error_msg, op);
+                    }
+
+                    node_type = BOOL_TYPE_ID;
+                },
+                .less_than, .less_than_or_equal, .greater_than, .greater_than_or_equal => {
+                    const lhs_ty = try self.typecheckNode(lhs, local_inferences);
+                    const rhs_ty = try self.typecheckNode(rhs, local_inferences);
+
+                    if (!self.unifyTypes(lhs_ty, rhs_ty, local_inferences)) {
+                        const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during operation. expected: {s}, found: {s}", .{ try self.compiler.prettyType(lhs_ty), try self.compiler.prettyType(rhs_ty) });
+                        try self.@"error"(error_msg, op);
+                    }
+
+                    node_type = BOOL_TYPE_ID;
+                },
+                .assignment, .add_assignment, .subtract_assignment, .multiply_assignment, .divide_assignment => {
+                    const lhs_ty = try self.typecheckLvalue(lhs, local_inferences);
+                    const rhs_ty = try self.typecheckNode(rhs, local_inferences);
+
+                    if (!self.unifyTypes(lhs_ty, rhs_ty, local_inferences)) {
+                        const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during operation. expected: {s}, found: {s}", .{ try self.compiler.prettyType(lhs_ty), try self.compiler.prettyType(rhs_ty) });
+                        try self.@"error"(error_msg, op);
+                    }
+
+                    node_type = VOID_TYPE_ID;
+                },
+                .@"and", .@"or" => {
+                    const lhs_ty = try self.typecheckNode(lhs, local_inferences);
+                    const rhs_ty = try self.typecheckNode(rhs, local_inferences);
+
+                    if (!self.unifyTypes(lhs_ty, BOOL_TYPE_ID, local_inferences)) {
+                        const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during binary operation. expected: bool, found: {s}", .{try self.compiler.prettyType(lhs_ty)});
+                        try self.@"error"(error_msg, op);
+                    }
+
+                    if (!self.unifyTypes(rhs_ty, BOOL_TYPE_ID, local_inferences)) {
+                        const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during binary operation. expected: bool, found: {s}", .{try self.compiler.prettyType(rhs_ty)});
+                        try self.@"error"(error_msg, op);
+                    }
+
+                    node_type = BOOL_TYPE_ID;
+                },
+                .as => {
+                    const rhs_ty = try self.typecheckNode(rhs, local_inferences);
+
+                    self.compiler.setNodeType(rhs, rhs_ty);
+                    self.compiler.setNodeType(node_id, rhs_ty);
+
+                    //FIXME: Add type conversion compatibility check
+                    node_type = rhs_ty;
+                },
+                else => @panic("unsupported operator"),
+            }
+        },
         .name => {
             // This looks like a variable, but may also be the name of a function
             const var_or_fun_id = self.findNameInScope(node_id);
@@ -751,6 +916,34 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
 
     self.compiler.setNodeType(node_id, node_type);
     return node_type;
+}
+
+pub fn typecheckLvalue(self: *Typechecker, lvalue: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
+    switch (self.compiler.getNode(lvalue)) {
+        .name => {
+            _ = try self.typecheckNode(lvalue, local_inferences);
+
+            const var_id = self.compiler.var_resolution.get(lvalue);
+            if (var_id) |v_id| {
+                const variable = self.compiler.getVariable(v_id);
+                const ty = variable.ty;
+                if (!variable.is_mutable) {
+                    if (std.mem.eql(u8, self.compiler.getSource(lvalue), ".")) {
+                        try self.@"error"("'self' variable is not mutable", lvalue);
+                    } else {
+                        try self.@"error"("variable is not mutable", lvalue);
+                    }
+                }
+                return ty;
+            } else {
+                try self.@"error"("internal error: variable unresolved when checking lvalue", lvalue);
+                return VOID_TYPE_ID;
+            }
+        },
+        else => {
+            unreachable;
+        },
+    }
 }
 
 pub fn typecheckVarOrFunction(self: *Typechecker, node_id: Parser.NodeId, var_or_fun_id: ?VarOrFuncId) !TypeId {

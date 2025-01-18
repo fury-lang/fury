@@ -103,6 +103,7 @@ pub fn print(self: *Compiler) void {
 
     std.debug.print("Functions:\n", .{});
     for (self.functions.items, 0..) |fun, fun_id| {
+        // std.debug.print("{s}\n", .{self.getSource(fun.name)});
         std.debug.print("{d} {any}\n", .{ fun_id, fun });
     }
 
@@ -327,7 +328,7 @@ pub fn resizeNodeTypes(self: *Compiler, size: usize, type_id: Typechecker.TypeId
 
 pub fn findOrCreateType(self: *Compiler, ty: Typechecker.Type) !Typechecker.TypeId {
     for (self.types.items, 0..) |*t, idx| {
-        if (@TypeOf(t.*) == @TypeOf(ty)) {
+        if (std.meta.eql(t.*, ty)) {
             return idx;
         }
     }

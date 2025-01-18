@@ -472,8 +472,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
             const var_id = self.compiler.var_resolution.get(let_stmt.variable_name).?;
             const ty = self.compiler.getVariable(var_id).ty;
 
-            var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
-            try self.codegenTypename(ty, &local_inference, output);
+            try self.codegenTypename(ty, local_inferences, output);
 
             try output.appendSlice(" /*");
             try output.appendSlice(self.compiler.getSource(self.compiler.getVariable(var_id).name));
@@ -533,8 +532,6 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                     try output.append(')');
                 },
             }
-
-            unreachable;
         },
         .call => |call| {
             const head = call.head;
@@ -768,6 +765,7 @@ pub fn codegen(self: *Codegen) ![]const u8 {
     try self.codegenFunDecls(&output);
 
     for (self.compiler.functions.items, 0..) |fun, idx| {
+        if (idx == 0) continue;
         const name = self.compiler.getSource(fun.name);
 
         if (std.mem.eql(u8, name, "main")) {

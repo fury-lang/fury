@@ -2732,7 +2732,7 @@ test "Parser quick test" {
     var parser = Parser.new(alloc, compiler, span_offset);
     var c = try parser.parse();
 
-    if (c.errors.items.len == 0) c.print();
+    // if (c.errors.items.len == 0) c.print();
 
     for (c.errors.items) |*err| {
         try c.printErrors(err);
