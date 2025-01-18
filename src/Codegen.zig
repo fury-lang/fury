@@ -262,7 +262,7 @@ pub fn codegenUserPredecls(self: *Codegen, output: *std.ArrayList(u8)) !void {
     for (self.compiler.types.items, 0..) |ty, idx| {
         switch (ty) {
             .@"struct" => |_struct| {
-                if (!_struct.generic_params.items.len == 0) {
+                if (!(_struct.generic_params.items.len == 0)) {
                     // Don't codegen generic functions. Instead, only codegen their instantiations
                     continue;
                 }
@@ -310,7 +310,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
     for (self.compiler.types.items, 0..) |ty, idx| {
         switch (ty) {
             .@"struct" => |_struct| {
-                if (!_struct.generic_params.items.len == 0) {
+                if (!(_struct.generic_params.items.len == 0)) {
                     // Don't codegen generic functions. Instead, only codegen their instantiations
                     continue;
                 }
@@ -318,7 +318,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                 // TODO virtual methods
 
                 try output.appendSlice("struct struct_");
-                const id = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+                const id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
                 try output.appendSlice(id);
                 try output.appendSlice("{\n");
 
@@ -333,12 +333,12 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
 
                 // TODO vitual methods
 
-                for (_struct.fields.items, 0..) |type_field, idx| {
+                for (_struct.fields.items, 0..) |type_field, _idx| {
                     var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
                     try self.codegenTypename(type_field.ty, &local_inference, output);
                     try output.append(' ');
                     try output.appendSlice(" field_");
-                    const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                    const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{_idx});
                     try output.appendSlice(f_id);
                     try output.appendSlice(" /*");
                     try output.appendSlice(type_field.name);
@@ -468,7 +468,24 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                 try output.appendSlice(src);
             }
         },
-        .let => unreachable,
+        .let => |let_stmt| {
+            const var_id = self.compiler.var_resolution.get(let_stmt.variable_name).?;
+            const ty = self.compiler.getVariable(var_id).ty;
+
+            var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+            try self.codegenTypename(ty, &local_inference, output);
+
+            try output.appendSlice(" /*");
+            try output.appendSlice(self.compiler.getSource(self.compiler.getVariable(var_id).name));
+            try output.appendSlice(" */");
+
+            try output.appendSlice(" variable_");
+            const id = try std.fmt.allocPrint(self.alloc, "{d}", .{var_id});
+            try output.appendSlice(id);
+
+            try output.appendSlice(" = ");
+            try self.codegenNode(let_stmt.initializer, local_inferences, output);
+        },
         .plus => try output.append('+'),
         .minus => try output.append('-'),
         .multiply => try output.append('*'),
@@ -489,10 +506,33 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
         .subtract_assignment => try output.appendSlice("-="),
         .multiply_assignment => try output.appendSlice("*="),
         .divide_assignment => try output.appendSlice("/="),
-        .binary_op => |_| {
-            // const lhs = bin_op.left;
-            // const op = bin_op.op;
-            // const rhs = bin_op.right;
+        .binary_op => |bin_op| {
+            const lhs = bin_op.left;
+            const op = bin_op.op;
+            const rhs = bin_op.right;
+
+            const node = self.compiler.getNode(op);
+            switch (node) {
+                Parser.AstNode.as => {
+                    try output.appendSlice("((");
+                    const rhs_type_id = self.compiler.getNodeType(rhs);
+                    try self.codegenNode(rhs_type_id, local_inferences, output);
+                    try output.append(')');
+                    try self.codegenNode(lhs, local_inferences, output);
+                    try output.append(')');
+                },
+                else => {
+                    try output.append('(');
+                    try self.codegenNode(lhs, local_inferences, output);
+                    try output.append(')');
+
+                    try self.codegenNode(op, local_inferences, output);
+
+                    try output.append('(');
+                    try self.codegenNode(rhs, local_inferences, output);
+                    try output.append(')');
+                },
+            }
 
             unreachable;
         },
