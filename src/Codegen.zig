@@ -20,7 +20,11 @@ pub fn codegenTypename(self: *Codegen, type_id: Typechecker.TypeId, local_infere
         .fun_local_type_val => |ty| {
             try self.codegenTypename(local_inferences.items[ty.offset], local_inferences, output);
         },
-        .@"struct" => unreachable,
+        .@"struct" => {
+            try output.appendSlice("struct struct_");
+            const id = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+            try output.appendSlice(id);
+        },
         .@"enum" => unreachable,
         .pointer => |pt| {
             try self.codegenTypename(pt.target, local_inferences, output);
@@ -61,10 +65,213 @@ pub fn codegenTypename(self: *Codegen, type_id: Typechecker.TypeId, local_infere
     }
 }
 
+pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fields: *std.ArrayList(Typechecker.TypeField), is_allocator: bool, base_classes: *?std.ArrayList(Typechecker.TypeId), output: *std.ArrayList(u8)) !void {
+    const ptr_type = self.compiler.getType(type_id);
+    if (@TypeOf(ptr_type) != @TypeOf(Typechecker.Type.pointer)) {
+        @panic("internal error: pointer to unknown type");
+    }
+
+    try output.appendSlice("struct struct_");
+    const inner_type_id = try std.fmt.allocPrint(self.alloc, "{d}", .{ptr_type.ptr_type.target});
+    try output.appendSlice(inner_type_id);
+    try output.appendSlice("* allocator_");
+    try output.appendSlice(inner_type_id);
+    try output.append('(');
+    try output.appendSlice("long allocator_id");
+
+    for (fields.items, 0..) |type_field, idx| {
+        try output.appendSlice(", ");
+        var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+        try self.codegenTypename(type_field.ty, &local_inference, output);
+        try output.append(' ');
+        try output.appendSlice("field_");
+        const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+        try output.appendSlice(f_id);
+        try output.appendSlice(" /*");
+        try output.appendSlice(type_field.name);
+        try output.appendSlice(" */");
+    }
+
+    for (base_classes.*.?.items) |base_class| {
+        const base_type = self.compiler.getType(base_class);
+        if (@TypeOf(base_type) != @TypeOf(Typechecker.Type.@"struct")) {
+            @panic("base classes should be struct Types");
+        }
+
+        for (base_type.@"struct".fields.items, 0..) |type_field, idx| {
+            try output.appendSlice(", ");
+            var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+            try self.codegenTypename(type_field.ty, &local_inference, output);
+            try output.append(' ');
+            const b_id = try std.fmt.allocPrint(self.alloc, "{d}", .{base_class});
+            const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+            try output.appendSlice("base_");
+            try output.appendSlice(b_id);
+            try output.appendSlice("_field_");
+            try output.appendSlice(f_id);
+            try output.appendSlice(" /*");
+            try output.appendSlice(type_field.name);
+            try output.appendSlice(" */");
+        }
+    }
+    try output.appendSlice(") {\n");
+
+    var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+    try self.codegenTypename(type_id, &local_inference, output);
+    try output.appendSlice(" tmp = (");
+    var local_inference0 = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+    try self.codegenTypename(type_id, &local_inference0, output);
+    try output.appendSlice(")allocate(allocator, sizeof(struct struct_");
+    try output.appendSlice(inner_type_id);
+    try output.appendSlice("), allocation_id);\n");
+
+    if (is_allocator) {
+        try output.appendSlice("tmp->__allocation_id__ = allocation_id;\n");
+    }
+
+    for (fields.*.items, 0..) |type_field, idx| {
+        try output.appendSlice(", field_");
+        const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+        try output.appendSlice(f_id);
+        try output.appendSlice(" /* ");
+        try output.appendSlice(type_field.name);
+        try output.appendSlice(" */");
+    }
+
+    for (base_classes.*.?.items) |base_class| {
+        const base_type = self.compiler.getType(base_class);
+        if (@TypeOf(base_type) != @TypeOf(Typechecker.Type.@"struct")) {
+            @panic("base classes should be struct Types");
+        }
+
+        for (base_type.@"struct".fields.items, 0..) |type_field, idx| {
+            const b_id = try std.fmt.allocPrint(self.alloc, "{d}", .{base_class});
+            const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+            try output.appendSlice("base_");
+            try output.appendSlice(b_id);
+            try output.appendSlice("_field_");
+            try output.appendSlice(f_id);
+            try output.appendSlice(" /* ");
+            try output.appendSlice(type_field.name);
+            try output.appendSlice(" */");
+        }
+    }
+    try output.appendSlice(");\n");
+
+    try output.appendSlice("return tmp;\n}\n");
+}
+
+pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, fields: *std.ArrayList(Typechecker.TypeField), base_classes: *?std.ArrayList(Typechecker.TypeId), output: *std.ArrayList(u8)) !void {
+    const ptr_type = self.compiler.getType(type_id);
+    if (@TypeOf(ptr_type) != @TypeOf(Typechecker.Type.pointer)) {
+        @panic("internal error: pointer to unknown type");
+    }
+
+    const inner_type_id = try std.fmt.allocPrint(self.alloc, "{d}", .{ptr_type.ptr_type.target});
+    try output.appendSlice("void initializer_");
+    try output.appendSlice(inner_type_id);
+    try output.appendSlice("(struct struct_");
+    try output.appendSlice(inner_type_id);
+    try output.appendSlice("* tmp");
+
+    for (fields.*.items, 0..) |type_field, idx| {
+        try output.appendSlice(", ");
+        var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+        try self.codegenTypename(type_field.ty, &local_inference, output);
+        try output.appendSlice(" field_");
+        const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+        try output.appendSlice(f_id);
+        try output.appendSlice(" /*");
+        try output.appendSlice(type_field.name);
+        try output.appendSlice(" */");
+    }
+
+    if (base_classes) |base_classes0| {
+        for (base_classes0.items) |base_class| {
+            const base_type = self.compiler.getType(base_class);
+            switch (base_type) {
+                .@"struct" => {
+                    for (base_type.@"struct".fields.items, 0..) |type_field, idx| {
+                        try output.appendSlice(", ");
+                        var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                        try self.codegenTypename(type_field.ty, &local_inference, output);
+                        try output.append(' ');
+                        try output.appendSlice("base_field_");
+                        const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                        try output.appendSlice(f_id);
+                        try output.appendSlice(" /*");
+                        try output.appendSlice(type_field.name);
+                        try output.appendSlice(" */");
+                    }
+                },
+                else => {
+                    // TODO
+                },
+            }
+        }
+    }
+    try output.appendSlice(") {\n");
+
+    if (base_classes) |base_classes0| {
+        const base_class = base_classes0.items;
+        try output.appendSlice("initializer_");
+        const base_id = try std.fmt.allocPrint(self.alloc, "{d}", .{base_class});
+        try output.appendSlice(base_id);
+        try output.appendSlice("(&tmp->baseclass");
+
+        for (base_classes0.items) |base| {
+            const base_type = self.compiler.getType(base);
+            switch (base_type) {
+                .@"struct" => {
+                    for (base_type.@"struct".fields.items, 0..) |type_field, idx| {
+                        try output.appendSlice("base_field_");
+                        const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                        try output.appendSlice(f_id);
+                        try output.appendSlice(" /*");
+                        try output.appendSlice(type_field.name);
+                        try output.appendSlice(" */");
+                    }
+                },
+                else => {
+                    // TODO
+                },
+            }
+        }
+        try output.appendSlice(");\n");
+
+        // TODO virtual table
+        // for (base_classes0.items, 0..) |base, depth| {
+
+        // }
+    }
+
+    for (fields.items, 0..) |type_field, idx| {
+        const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+        try output.appendSlice("tmp->field_");
+        try output.appendSlice(f_id);
+        try output.appendSlice(" = ");
+        try output.appendSlice("field_");
+        try output.appendSlice(f_id);
+        try output.appendSlice(" /*");
+        try output.appendSlice(type_field.name);
+        try output.appendSlice(" */");
+    }
+}
+
 pub fn codegenUserPredecls(self: *Codegen, output: *std.ArrayList(u8)) !void {
     for (self.compiler.types.items, 0..) |ty, idx| {
         switch (ty) {
-            .@"struct" => unreachable,
+            .@"struct" => |_struct| {
+                if (!_struct.generic_params.items.len == 0) {
+                    // Don't codegen generic functions. Instead, only codegen their instantiations
+                    continue;
+                }
+
+                try output.appendSlice("struct struct_");
+                const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                try output.appendSlice(f_id);
+                try output.appendSlice(";\n");
+            },
             .@"enum" => unreachable,
             .fun => |fun| {
                 const params = fun.params;
@@ -102,7 +309,46 @@ pub fn codegenUserPredecls(self: *Codegen, output: *std.ArrayList(u8)) !void {
 pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
     for (self.compiler.types.items, 0..) |ty, idx| {
         switch (ty) {
-            .@"struct" => unreachable,
+            .@"struct" => |_struct| {
+                if (!_struct.generic_params.items.len == 0) {
+                    // Don't codegen generic functions. Instead, only codegen their instantiations
+                    continue;
+                }
+
+                // TODO virtual methods
+
+                try output.appendSlice("struct struct_");
+                const id = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+                try output.appendSlice(id);
+                try output.appendSlice("{\n");
+
+                if (_struct.is_allocator) {
+                    var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                    try self.codegenTypename(Typechecker.I64_TYPE_ID, &local_inference, output);
+                    try output.append(' ');
+                    try output.appendSlice("__allocation_id__;\n");
+                }
+
+                // TODO base classes
+
+                // TODO vitual methods
+
+                for (_struct.fields.items, 0..) |type_field, idx| {
+                    var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                    try self.codegenTypename(type_field.ty, &local_inference, output);
+                    try output.append(' ');
+                    try output.appendSlice(" field_");
+                    const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                    try output.appendSlice(f_id);
+                    try output.appendSlice(" /*");
+                    try output.appendSlice(type_field.name);
+                    try output.appendSlice(" */");
+                }
+
+                try output.appendSlice("};\n");
+
+                // TODO vtables predecls
+            },
             .@"enum" => unreachable,
             .raw_buffer => unreachable,
             .fun => |fun| {
