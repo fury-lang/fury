@@ -4,6 +4,4 @@ mut x = 5
 
 x = x + 6
 
-// program out of bound error without semicolon
-// we got no statement node for the next line
 println(x);

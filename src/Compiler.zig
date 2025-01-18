@@ -254,7 +254,8 @@ pub fn addFile(self: *Compiler, file_name: []const u8) !void {
     defer file.close();
 
     const file_size = try file.getEndPos();
-    const span_offset = self.source.len;
+    // +1 for the newline at the start of the file
+    const span_offset = self.source.len + 1;
     const content = try self.alloc.alloc(u8, file_size);
     _ = try file.read(content);
 

@@ -572,7 +572,7 @@ pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
         } else if (self.isKeyword("enum")) {
             try curr_body.append(try self.enumDefinition());
         } else if (self.isKeyword("use")) {
-            unreachable;
+            return try self.@"error"("use statement not supported yet");
         } else if (self.isKeyword("let")) {
             try curr_body.append(try self.letStatement());
         } else if (self.isKeyword("mut")) {
@@ -1118,7 +1118,7 @@ pub fn simpleExpression(self: *Parser) anyerror!NodeId {
         expr = try self.cString();
     } else if (self.isExpectedToken(TokenType.CChar)) {
         expr = try self.cChar();
-    } else if (self.isExpectedToken(TokenType.Int) or self.isExpectedToken(TokenType.Float) or self.isExpectedToken(TokenType.Minus)) {
+    } else if (self.isExpectedToken(TokenType.Int) or self.isExpectedToken(TokenType.Float) or self.isExpectedToken(TokenType.Dash)) {
         expr = try self.number();
     } else if (self.isExpectedToken(TokenType.Name)) {
         expr = try self.variableOrCall();
@@ -1745,10 +1745,10 @@ pub fn rawBuffer(self: *Parser) !NodeId {
     try self._keyword("raw");
 
     var param_list = std.ArrayList(NodeId).init(self.alloc);
-    try self.lparen();
+    try self.lsquare();
 
     while (self.hasTokens()) {
-        if (self.isExpectedToken(TokenType.RParen)) {
+        if (self.isExpectedToken(TokenType.RSquare)) {
             break;
         }
 
@@ -1761,7 +1761,7 @@ pub fn rawBuffer(self: *Parser) !NodeId {
     }
 
     span_end = self.position() + 1;
-    try self.rparen();
+    try self.rsquare();
 
     return try self.createNode(
         .{ .raw_buffer = param_list },
@@ -1781,7 +1781,7 @@ pub fn number(self: *Parser) !NodeId {
                 _ = self.next();
                 return try self.createNode(AstNode{ .float = Void.void }, token.span_start, token.span_end);
             },
-            TokenType.Minus => {
+            TokenType.Dash => {
                 _ = self.next();
                 const remaining = try self.number();
                 const span_end = self.getSpanEnd(remaining);
@@ -2224,7 +2224,7 @@ pub fn lexQuotedCString(self: *Parser) ?Token {
 }
 
 pub fn lexQuotedCChar(self: *Parser) ?Token {
-    const span_start = self.current_file.span_offset;
+    const span_start = self.current_file.span_offset + 1;
     var span_position = span_start + 1;
     var is_excaped = false;
     while (span_position < self.compiler.source.len) {
@@ -2258,7 +2258,39 @@ pub fn lexNumber(self: *Parser) ?Token {
         span_position += 1;
     }
 
-    // skip hex, octal, binary, float for now
+    // skip hex, octal, binary
+    if (span_position < self.currentFileEnd() and self.compiler.source[span_position] == '.' and (span_position + 1 < self.currentFileEnd()) and isAsciiDigit(self.compiler.source[span_position + 1])) {
+        // Looks like a float
+        span_position += 1;
+        while (span_position < self.currentFileEnd()) {
+            if (!isAsciiDigit(self.compiler.source[span_position])) {
+                break;
+            }
+            span_position += 1;
+        }
+
+        if (span_position < self.currentFileEnd() and (self.compiler.source[span_position] == 'e' or self.compiler.source[span_position] == 'E')) {
+            span_position += 1;
+            if (span_position < self.currentFileEnd() and self.compiler.source[span_position] == '-') {
+                span_position += 1;
+            }
+
+            while (span_position < self.currentFileEnd()) {
+                if (!isAsciiDigit(self.compiler.source[span_position])) {
+                    break;
+                }
+                span_position += 1;
+            }
+        }
+
+        self.current_file.span_offset = span_position;
+
+        return Token{
+            .token_type = TokenType.Float,
+            .span_start = span_start,
+            .span_end = self.current_file.span_offset,
+        };
+    }
 
     self.current_file.span_offset = span_position;
 
@@ -2611,7 +2643,11 @@ pub fn lexSymbol(self: *Parser) ?Token {
             .span_start = span_start,
             .span_end = span_start + 1,
         },
-        else => @panic("Internal compiler error: symbol character mismatched in lexer"),
+        else => {
+            const symbol = std.fmt.allocPrint(self.alloc, "Internal compiler error: symbol character mismatched in lexer: {c}", .{self.compiler.source[span_start]}) catch unreachable;
+            _ = self.@"error"(symbol) catch {};
+            return null;
+        },
     };
 
     self.current_file.span_offset = result.span_end;

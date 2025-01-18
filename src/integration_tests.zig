@@ -9,11 +9,13 @@ test "Tests coverage" {
     var dir = try std.fs.cwd().openDir("tests", .{});
     defer dir.close();
     var walker = try dir.walk(alloc);
-    var total: usize = 0;
-    var pass: usize = 0;
+    var total: i32 = 0;
+    var pass: i32 = 0;
+    var fail: i32 = 0;
 
     std.debug.print("Parsing coverage:\n", .{});
     while (try walker.next()) |entry| {
+        total += 1;
         const file_path = try std.fmt.allocPrint(alloc, "tests/{s}", .{entry.path});
         const path_len = file_path.len;
         if (!std.mem.eql(u8, file_path[(path_len - 2)..path_len], "pn")) {
@@ -33,14 +35,16 @@ test "Tests coverage" {
 
         var parser = Parser.new(alloc, compiler, span_offset);
         const c = try parser.parse();
-        if (c.errors.items.len == 0) {
-            pass += 1;
-            std.debug.print("{s}: ✅Pass\n", .{file_path});
+
+        if (c.errors.items.len > 0) {
+            std.debug.print("{s}: ❌Fail\n", .{file_path});
+            fail += 1;
             continue;
         }
-        total += 1;
-        std.debug.print("{s}: ❌Fail\n", .{file_path});
+
+        pass += 1;
+        std.debug.print("{s}: ✅Pass\n", .{file_path});
     }
 
-    std.debug.print("Total: {d}, Pass: {d}, Fail: {d}", .{ total, pass, total - pass });
+    std.debug.print("Total: {d}, Pass: {d}, Fail: {d}\n", .{ total, pass, fail });
 }

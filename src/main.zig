@@ -35,6 +35,7 @@ pub fn main() !void {
 
     for (c.errors.items) |*err| {
         try c.printErrors(err);
+        // std.debug.print("err: {s}\n", .{err.*.message});
     }
 
     // var typechecker = try Typechecker.new(alloc, c);
