@@ -389,12 +389,31 @@ pub fn isCopyableType(self: *Compiler, type_id: Typechecker.TypeId) bool {
     };
 }
 
+pub fn findPointerTo(self: *Compiler, type_id: Typechecker.TypeId) ?Typechecker.TypeId {
+    for (self.types.items, 0..) |ty, found_type_id| {
+        switch (ty) {
+            .pointer => |pt| {
+                if (pt.target == type_id) {
+                    return found_type_id;
+                }
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
 pub fn methodsOnType(self: *Compiler, idx: Typechecker.TypeId) std.ArrayList(Typechecker.FuncId) {
     return self.methods_on_type.get(idx).?;
 }
 
 pub fn virtualMethodsOnType(self: *Compiler, idx: Typechecker.TypeId) std.ArrayList(Typechecker.FuncId) {
-    return self.virtual_methods_on_type.get(idx).?;
+    const virt_method = self.virtual_methods_on_type.get(idx);
+    if (virt_method) |methods| {
+        return methods;
+    } else {
+        return std.ArrayList(Typechecker.FuncId).init(self.alloc);
+    }
 }
 
 pub fn insertMethodsOnType(self: *Compiler, type_id: Typechecker.TypeId, methods: std.ArrayList(Typechecker.FuncId)) !void {
@@ -405,6 +424,21 @@ pub fn insertVirtualMethodsOnType(self: *Compiler, type_id: Typechecker.TypeId, 
     if (!(self.methods_on_type.count() == 0)) {
         try self.virtual_methods_on_type.put(type_id, methods);
     }
+}
+
+pub fn hasUnsatisfiedVirtualMethods(self: *Compiler, idx: Typechecker.TypeId) bool {
+    if (!(self.virtualMethodsOnType(idx).items.len == 0)) {
+        return true;
+    }
+
+    // TODO flatten the list
+    // for (self.base_classes.get(idx).items) |base_class| {
+    //     if (!self.hasFullySatisfiesVirtualMethods(base_class)) {
+    //         return true;
+    //     }
+    // }
+
+    return false;
 }
 
 pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
@@ -423,9 +457,22 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
             //FIXME: give this a name
             return "enum";
         },
-        .fun => {
-            // TODO
-            return "fun pretty type not implemented";
+        .fun => |fun| {
+            var output = std.ArrayList(u8).init(self.alloc);
+            var first = true;
+            for (fun.params.items) |param| {
+                if (!first) {
+                    try output.appendSlice(", ");
+                } else {
+                    first = false;
+                }
+                const v_id = try std.fmt.allocPrint(self.alloc, "{d}", .{self.getVariable(param.var_id).ty});
+                try output.appendSlice(v_id);
+            }
+
+            try output.appendSlice(") -> ");
+            try output.appendSlice(try self.prettyType(fun.ret));
+            return try output.toOwnedSlice();
         },
         .i64 => return "i64",
         .pointer => |pt| {
@@ -444,8 +491,13 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
         .range => |id| {
             return try std.fmt.allocPrint(self.alloc, "range({s})", .{try self.prettyType(id)});
         },
-        .raw_buffer => unreachable,
-        .@"struct" => unreachable,
+        .raw_buffer => |id| {
+            return try std.fmt.allocPrint(self.alloc, "[{s}]", .{try self.prettyType(id)});
+        },
+        .@"struct" => |_| {
+            // FIXME: need more info
+            return try std.fmt.allocPrint(self.alloc, "struct()", .{});
+        },
         .fun_local_type_val => |ty| {
             return try std.fmt.allocPrint(self.alloc, "<local typevar: {d}", .{ty.offset});
         },

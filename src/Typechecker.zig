@@ -501,7 +501,9 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
     for (args.items, 0..) |arg, idx| {
         const arg_node = self.compiler.getNode(arg);
         switch (arg_node) {
-            .named_value => unreachable,
+            .named_value => {
+                // TODO
+            },
             else => {
                 var arg_type: TypeId = undefined;
                 if (idx == 0 and method_target != null) {
@@ -556,7 +558,16 @@ pub fn typecheckCall(self: *Typechecker, node_id: Parser.NodeId, head: Parser.No
     self.compiler.setNodeType(head, type_id);
 
     switch (self.compiler.getNode(head)) {
-        .member_access => unreachable,
+        .member_access => |mem_access| {
+            const target = mem_access.target;
+
+            if (self.compiler.fun_resolution.get(head)) |fun_id| {
+                return try self.typecheckCallWithFunId(head, fun_id, args, target, local_inferences);
+            } else {
+                // We're not looking at the name of a defined function, but likely looking at a first-class function instead
+                return try self.typecheckCallWithNodeId(head, node_id, args, local_inferences);
+            }
+        },
         else => {
             if (self.compiler.fun_resolution.get(head)) |fun_id| {
                 return try self.typecheckCallWithFunId(head, fun_id, args, null, local_inferences);
@@ -1223,7 +1234,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
     return node_type;
 }
 
-pub fn typecheckLvalue(self: *Typechecker, lvalue: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
+pub fn typecheckLvalue(self: *Typechecker, lvalue: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) anyerror!TypeId {
     switch (self.compiler.getNode(lvalue)) {
         .name => {
             _ = try self.typecheckNode(lvalue, local_inferences);
@@ -1245,10 +1256,49 @@ pub fn typecheckLvalue(self: *Typechecker, lvalue: Parser.NodeId, local_inferenc
                 return VOID_TYPE_ID;
             }
         },
+        .member_access => |member| {
+            const target = member.target;
+            const field = member.field;
+
+            var head_type_id = try self.typecheckLvalue(target, local_inferences);
+            head_type_id = self.compiler.resolveType(head_type_id, local_inferences);
+
+            const field_name = self.compiler.getSource(field);
+            const target_name = self.compiler.getSource(target);
+
+            const target_type_id = self.compiler.getUnderlyingTypeId(head_type_id);
+
+            switch (self.compiler.getType(target_type_id)) {
+                .@"struct" => |s| {
+                    for (s.fields.items) |type_field| {
+                        const mem_access = type_field.member_access;
+                        const _name = type_field.name;
+                        const ty = type_field.ty;
+
+                        if (std.mem.eql(u8, _name, field_name)) {
+                            if (mem_access == Parser.MemberAccess.Private and !std.mem.eql(u8, target_name, ".") and !std.mem.eql(u8, target_name, "self")) {
+                                // Private and not accessing 'self'
+                                try self.@"error"("modifying private member field", field);
+                            }
+
+                            self.compiler.setNodeType(lvalue, ty);
+                            self.compiler.setNodeType(field, ty);
+                            return ty;
+                        }
+                    }
+                },
+                else => {
+                    try self.@"error"("field access only supported on structs", field);
+                    return VOID_TYPE_ID;
+                },
+            }
+        },
         else => {
-            unreachable;
+            try self.@"error"("unsupported lvalue, needs variable or field,", lvalue);
+            return VOID_TYPE_ID;
         },
     }
+    return VOID_TYPE_ID;
 }
 
 pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {

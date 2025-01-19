@@ -31,7 +31,7 @@ pub fn main() !void {
     var parser = Parser.new(alloc, compiler, span_offset);
     var c = try parser.parse();
 
-    if (c.errors.items.len == 0) c.print();
+    // if (c.errors.items.len == 0) c.print();
 
     for (c.errors.items) |*err| {
         try c.printErrors(err);
@@ -46,10 +46,10 @@ pub fn main() !void {
         try c_new.printErrors(err);
     }
 
-    // var codegen = try Codegen.new(alloc, c_new);
-    // const output = try codegen.codegen();
+    var codegen = try Codegen.new(alloc, c_new);
+    const output = try codegen.codegen();
 
-    // var output_file = try std.fs.cwd().createFile("output.c", .{});
-    // defer output_file.close();
-    // _ = try output_file.write(output);
+    var output_file = try std.fs.cwd().createFile("output.c", .{});
+    defer output_file.close();
+    _ = try output_file.write(output);
 }

@@ -65,19 +65,20 @@ pub fn codegenTypename(self: *Codegen, type_id: Typechecker.TypeId, local_infere
     }
 }
 
-pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fields: *std.ArrayList(Typechecker.TypeField), is_allocator: bool, base_classes: *?std.ArrayList(Typechecker.TypeId), output: *std.ArrayList(u8)) !void {
+pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fields: *std.ArrayList(Typechecker.TypeField), is_allocator: bool, base_classes0: *?std.ArrayList(Typechecker.TypeId), output: *std.ArrayList(u8)) !void {
     const ptr_type = self.compiler.getType(type_id);
-    if (@TypeOf(ptr_type) != @TypeOf(Typechecker.Type.pointer)) {
+    const tagname = @tagName(ptr_type);
+    if (!std.mem.eql(u8, tagname, "pointer")) {
         @panic("internal error: pointer to unknown type");
     }
 
     try output.appendSlice("struct struct_");
-    const inner_type_id = try std.fmt.allocPrint(self.alloc, "{d}", .{ptr_type.ptr_type.target});
+    const inner_type_id = try std.fmt.allocPrint(self.alloc, "{d}", .{ptr_type.pointer.target});
     try output.appendSlice(inner_type_id);
     try output.appendSlice("* allocator_");
     try output.appendSlice(inner_type_id);
     try output.append('(');
-    try output.appendSlice("long allocator_id");
+    try output.appendSlice("long allocation_id");
 
     for (fields.items, 0..) |type_field, idx| {
         try output.appendSlice(", ");
@@ -92,9 +93,16 @@ pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fie
         try output.appendSlice(" */");
     }
 
-    for (base_classes.*.?.items) |base_class| {
+    var base_classes: std.ArrayList(Typechecker.TypeId) = undefined;
+    if (base_classes0.* == null) {
+        base_classes = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+    } else {
+        base_classes = base_classes0.*.?;
+    }
+    for (base_classes.items) |base_class| {
         const base_type = self.compiler.getType(base_class);
-        if (@TypeOf(base_type) != @TypeOf(Typechecker.Type.@"struct")) {
+        const base_tag = @tagName(base_type);
+        if (!std.mem.eql(u8, base_tag, "struct")) {
             @panic("base classes should be struct Types");
         }
 
@@ -129,6 +137,10 @@ pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fie
         try output.appendSlice("tmp->__allocation_id__ = allocation_id;\n");
     }
 
+    try output.appendSlice("initializer_");
+    try output.appendSlice(inner_type_id);
+    try output.appendSlice("(tmp");
+
     for (fields.*.items, 0..) |type_field, idx| {
         try output.appendSlice(", field_");
         const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
@@ -138,7 +150,7 @@ pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fie
         try output.appendSlice(" */");
     }
 
-    for (base_classes.*.?.items) |base_class| {
+    for (base_classes.items) |base_class| {
         const base_type = self.compiler.getType(base_class);
         if (@TypeOf(base_type) != @TypeOf(Typechecker.Type.@"struct")) {
             @panic("base classes should be struct Types");
@@ -163,11 +175,12 @@ pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fie
 
 pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, fields: *std.ArrayList(Typechecker.TypeField), base_classes: *?std.ArrayList(Typechecker.TypeId), output: *std.ArrayList(u8)) !void {
     const ptr_type = self.compiler.getType(type_id);
-    if (@TypeOf(ptr_type) != @TypeOf(Typechecker.Type.pointer)) {
+    const tagname = @tagName(ptr_type);
+    if (!std.mem.eql(u8, tagname, "pointer")) {
         @panic("internal error: pointer to unknown type");
     }
 
-    const inner_type_id = try std.fmt.allocPrint(self.alloc, "{d}", .{ptr_type.ptr_type.target});
+    const inner_type_id = try std.fmt.allocPrint(self.alloc, "{d}", .{ptr_type.pointer.target});
     try output.appendSlice("void initializer_");
     try output.appendSlice(inner_type_id);
     try output.appendSlice("(struct struct_");
@@ -181,12 +194,12 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
         try output.appendSlice(" field_");
         const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
         try output.appendSlice(f_id);
-        try output.appendSlice(" /*");
+        try output.appendSlice(" /* ");
         try output.appendSlice(type_field.name);
-        try output.appendSlice(" */");
+        try output.appendSlice(" */ ");
     }
 
-    if (base_classes) |base_classes0| {
+    if (base_classes.*) |base_classes0| {
         for (base_classes0.items) |base_class| {
             const base_type = self.compiler.getType(base_class);
             switch (base_type) {
@@ -199,9 +212,9 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
                         try output.appendSlice("base_field_");
                         const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
                         try output.appendSlice(f_id);
-                        try output.appendSlice(" /*");
+                        try output.appendSlice(" /* ");
                         try output.appendSlice(type_field.name);
-                        try output.appendSlice(" */");
+                        try output.appendSlice(" */ ");
                     }
                 },
                 else => {
@@ -212,7 +225,7 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
     }
     try output.appendSlice(") {\n");
 
-    if (base_classes) |base_classes0| {
+    if (base_classes.*) |base_classes0| {
         const base_class = base_classes0.items;
         try output.appendSlice("initializer_");
         const base_id = try std.fmt.allocPrint(self.alloc, "{d}", .{base_class});
@@ -227,9 +240,9 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
                         try output.appendSlice("base_field_");
                         const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
                         try output.appendSlice(f_id);
-                        try output.appendSlice(" /*");
+                        try output.appendSlice(" /* ");
                         try output.appendSlice(type_field.name);
-                        try output.appendSlice(" */");
+                        try output.appendSlice(" */ ");
                     }
                 },
                 else => {
@@ -252,10 +265,12 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
         try output.appendSlice(" = ");
         try output.appendSlice("field_");
         try output.appendSlice(f_id);
-        try output.appendSlice(" /*");
+        try output.appendSlice(" /* ");
         try output.appendSlice(type_field.name);
-        try output.appendSlice(" */");
+        try output.appendSlice(" */ ;\n");
     }
+
+    try output.appendSlice("\n}\n");
 }
 
 pub fn codegenUserPredecls(self: *Codegen, output: *std.ArrayList(u8)) !void {
@@ -329,7 +344,13 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                     try output.appendSlice("__allocation_id__;\n");
                 }
 
-                // TODO base classes
+                const base_classes = self.compiler.base_classes.get(idx);
+                if (base_classes) |classes| {
+                    const _ty = classes.items[0];
+                    var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                    try self.codegenTypename(_ty, &local_inference, output);
+                    try output.appendSlice(" baseclass;\n");
+                }
 
                 // TODO vitual methods
 
@@ -342,12 +363,21 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                     try output.appendSlice(f_id);
                     try output.appendSlice(" /*");
                     try output.appendSlice(type_field.name);
-                    try output.appendSlice(" */");
+                    try output.appendSlice(" */ ;\n");
                 }
 
                 try output.appendSlice("};\n");
 
                 // TODO vtables predecls
+
+                if (self.compiler.findPointerTo(idx)) |ptr| {
+                    try self.codegenInitializerFunction(ptr, @constCast(&_struct.fields), @constCast(&base_classes), output);
+                    if (!self.compiler.hasUnsatisfiedVirtualMethods(idx)) {
+                        try self.codegenAllocatorFunction(ptr, @constCast(&_struct.fields), _struct.is_allocator, @constCast(&base_classes), output);
+                    }
+                } else {
+                    @panic("internal error: can't find pointer to type");
+                }
             },
             .@"enum" => unreachable,
             .raw_buffer => unreachable,
@@ -417,6 +447,7 @@ pub fn codegenFunSignature(self: *Codegen, fun_id: Typechecker.FuncId, params: *
 
         try output.append(' ');
         try output.appendSlice("variable_");
+
         const var_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{param.var_id});
         try output.appendSlice(var_id_str);
     }
@@ -452,6 +483,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                 try output.appendSlice(" */");
 
                 try output.appendSlice("variable_");
+
                 const var_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{var_id});
                 try output.appendSlice(var_id_str);
             } else if (self.compiler.fun_resolution.get(node_id)) |fun_id| {
@@ -634,11 +666,87 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                 },
             }
         },
-        .new => unreachable,
+        .new => |_new| {
+            const type_id = self.compiler.getNodeType(node_id);
+
+            const ptr_type = self.compiler.getType(type_id);
+            switch (ptr_type) {
+                .pointer => {},
+                else => {
+                    const error_msg = try std.fmt.allocPrint(self.alloc, "internal error: 'new' creating non-pointer type: {any}", .{self.compiler.getType(type_id)});
+                    @panic(error_msg);
+                },
+            }
+
+            try output.appendSlice("allocator_");
+            const type_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{ptr_type.pointer.target});
+            try output.appendSlice(type_id_str);
+            try output.append('(');
+
+            try self.codegenAnnotation(node_id, output);
+
+            switch (self.compiler.getNode(_new.allocated)) {
+                .call => |c| {
+                    for (c.args.items) |arg| {
+                        try output.appendSlice(", ");
+                        try self.codegenNode(arg, local_inferences, output);
+                    }
+
+                    try output.append(')');
+                },
+                else => {
+                    @panic("internal error: expected allocation call during allocation");
+                },
+            }
+        },
         .namespaced_lookup => unreachable,
-        .named_value => unreachable,
+        .named_value => |named_value| {
+            // FIXME: this should probably be handled cleanly via typecheck+codegen
+            // rather than ignoring the name
+            try self.codegenNode(named_value.value, local_inferences, output);
+        },
         .@"break" => unreachable,
-        .member_access => unreachable,
+        .member_access => |member_access| {
+            try self.codegenNode(member_access.target, local_inferences, output);
+            try output.appendSlice("->");
+
+            const field_name = self.compiler.getSource(member_access.field);
+
+            std.debug.print("name-> {s}\n", .{field_name});
+
+            var type_id = self.compiler.getNodeType(member_access.target);
+            type_id = self.compiler.resolveNodeType(type_id, local_inferences);
+            type_id = self.compiler.getUnderlyingTypeId(type_id);
+
+            // FIXME: we can do this because the fields are unique, but we probably want
+            // the resolution to tell us which one to use
+            std.debug.print("type: {any}\n", .{self.compiler.getType(type_id)});
+            switch (self.compiler.getType(type_id)) {
+                .@"struct" => |s| {
+                    var found = false;
+                    for (s.fields.items, 0..) |type_field, idx| {
+                        std.debug.print("{s}     {s}    type_id: {d}\n", .{ type_field.name, field_name, type_id });
+                        if (std.mem.eql(u8, type_field.name, field_name)) {
+                            try output.appendSlice("field_");
+                            const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                            try output.appendSlice(f_id);
+                            try output.appendSlice(" /*");
+                            try output.appendSlice(type_field.name);
+                            try output.appendSlice(" */");
+                            found = true;
+                        }
+                    }
+
+                    // if (!found) {
+                    //     @panic("internal error: field could not be codegen'd");
+                    // }
+                },
+                else => {
+                    std.debug.print("not a struct type\n", .{});
+                    // @panic("internal error: field access on non-struct");
+                },
+            }
+        },
         .raw_buffer => unreachable,
         .index => unreachable,
         .statement => |stmt| {
