@@ -501,8 +501,49 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
     for (args.items, 0..) |arg, idx| {
         const arg_node = self.compiler.getNode(arg);
         switch (arg_node) {
-            .named_value => {
-                // TODO
+            .named_value => |named_value| {
+                const _name = named_value.name;
+                const _value = named_value.value;
+
+                // Set up expected type for inference. Note: if we find concrete values
+                // this inference type will be replaced by the concrete type.
+                self.compiler.setNodeType(_value, self.compiler.getVariable(params.items[idx].var_id).ty);
+
+                // If this is a method, we've already checked the first argument (aka
+                // the target of the method)
+                var arg_ty = try self.typecheckNode(_value, local_inferences);
+                if (idx == 0 and method_target != null) {
+                    arg_ty = self.compiler.getNodeType(_value);
+                }
+
+                try self.maybeMoveVariable(_value, local_inferences);
+
+                if (self.compiler.getVariable(params.items[idx].var_id).is_mutable and !self.isBindingMutable(_value)) {
+                    try self.@"error"("argument to function needs to be mutable", _value);
+                    // TODO add a note
+                }
+
+                const variable = self.compiler.getVariable(params.items[idx].var_id);
+                const variable_ty = variable.ty;
+                const variable_method = variable.name;
+                if (self.unifyTypes(arg_ty, variable_ty, local_inferences)) {
+                    // TODO check for subtype
+                    _ = variable_method;
+                } else {
+                    const expected_type = self.compiler.resolveType(arg_ty, local_inferences);
+                    const found_type = self.compiler.resolveType(variable_ty, local_inferences);
+                    const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ try self.compiler.prettyType(expected_type), try self.compiler.prettyType(found_type) });
+                    try self.@"error"(error_msg, _value);
+
+                    // TODO add a note about where params are defined
+                }
+
+                const arg_name = self.compiler.getSource(_name);
+                if (!std.mem.eql(u8, arg_name, params.items[idx].name)) {
+                    const error_msg = try std.fmt.allocPrint(self.alloc, "expected name {s}", .{params.items[idx].name});
+                    try self.@"error"(error_msg, _name);
+                    // TODO add a note about where param is defined
+                }
             },
             else => {
                 var arg_type: TypeId = undefined;
@@ -920,9 +961,11 @@ pub fn maybeMoveVariable(self: *Typechecker, node_id: Parser.NodeId, local_infer
                             try self.scope.items[last].move_owned_values.put(v_id, node_id);
                         }
                     },
+                    else => {},
                 }
             }
         },
+        else => {},
     }
 }
 
