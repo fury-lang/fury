@@ -29,11 +29,17 @@ types: std.ArrayList(Typechecker.Type),
 // indexed by ModuleId
 modules: std.ArrayList(Typechecker.Module),
 
+// Methods on types
+methods_on_type: std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.FuncId)),
+virtual_methods_on_type: std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.FuncId)),
+
 // Use/def
 call_resolution: std.AutoHashMap(Parser.NodeId, CallTarget),
 var_resolution: std.AutoHashMap(Parser.NodeId, Typechecker.VarId),
 fun_resolution: std.AutoHashMap(Parser.NodeId, Typechecker.FuncId),
 type_resolution: std.AutoHashMap(Parser.NodeId, Typechecker.TypeId),
+
+base_classes: std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.TypeId)),
 
 errors: std.ArrayList(Errors.SourceError),
 
@@ -75,6 +81,9 @@ pub fn new(alloc: std.mem.Allocator) Compiler {
         .var_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.VarId).init(alloc),
         .fun_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.FuncId).init(alloc),
         .type_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.TypeId).init(alloc),
+        .base_classes = std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.TypeId)).init(alloc),
+        .methods_on_type = std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.FuncId)).init(alloc),
+        .virtual_methods_on_type = std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.FuncId)).init(alloc),
     };
 }
 
@@ -282,6 +291,10 @@ pub fn getType(self: *Compiler, type_id: Typechecker.TypeId) Typechecker.Type {
     return self.types.items[type_id];
 }
 
+pub fn getMutType(self: *Compiler, type_id: Typechecker.TypeId) *Typechecker.Type {
+    return &self.types.items[type_id];
+}
+
 pub fn getNodeType(self: *Compiler, node_id: Parser.NodeId) Parser.NodeId {
     return self.node_types.items[node_id];
 }
@@ -358,6 +371,39 @@ pub fn resolveNodeType(self: *Compiler, node_id: Parser.NodeId, local_inferences
         .fun_local_type_val => |ty| return local_inferences.items[ty.offset],
         .raw_buffer => unreachable,
         else => return self.node_types.items[node_id],
+    }
+}
+
+pub fn freshTypeVariable(self: *Compiler, node_id: Parser.NodeId) !Typechecker.TypeId {
+    try self.types.append(Typechecker.Type{ .type_variable = node_id });
+    return self.types.items.len - 1;
+}
+
+pub fn isCopyableType(self: *Compiler, type_id: Typechecker.TypeId) bool {
+    const ty = self.getType(type_id);
+    return switch (ty) {
+        .bool => true,
+        .i64 => true,
+        .f64 => true,
+        else => false,
+    };
+}
+
+pub fn methodsOnType(self: *Compiler, idx: Typechecker.TypeId) std.ArrayList(Typechecker.FuncId) {
+    return self.methods_on_type.get(idx).?;
+}
+
+pub fn virtualMethodsOnType(self: *Compiler, idx: Typechecker.TypeId) std.ArrayList(Typechecker.FuncId) {
+    return self.virtual_methods_on_type.get(idx).?;
+}
+
+pub fn insertMethodsOnType(self: *Compiler, type_id: Typechecker.TypeId, methods: std.ArrayList(Typechecker.FuncId)) !void {
+    try self.methods_on_type.put(type_id, methods);
+}
+
+pub fn insertVirtualMethodsOnType(self: *Compiler, type_id: Typechecker.TypeId, methods: std.ArrayList(Typechecker.FuncId)) !void {
+    if (!(self.methods_on_type.count() == 0)) {
+        try self.virtual_methods_on_type.put(type_id, methods);
     }
 }
 

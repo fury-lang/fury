@@ -293,7 +293,13 @@ pub fn unifyTypes(self: *Typechecker, lhs: TypeId, rhs: TypeId, local_inferences
             return self.unifyTypes(lhs, local_inferences.items[rhs_ty.fun_local_type_val.offset], local_inferences);
         }
     } else if (std.mem.eql(u8, @tagName(lhs_ty), "pointer") and std.mem.eql(u8, @tagName(rhs_ty), "pointer")) {
-        unreachable;
+        // We allow for unknown pointer types to assign in from the other types,
+        // which allows us to not have to guess how `self` will be used
+        // Also, if an owned pointer is assigned to a shared pointer, then we'll
+        // allow the move into a shared pointer, effectively removing the owned-ness.
+        // We can do this because the ownership will move.
+        return lhs_ty.pointer.pointer_type == Parser.PointerType.Unknown or (lhs_ty.pointer.pointer_type == rhs_ty.pointer.pointer_type) or (lhs_ty.pointer.pointer_type == Parser.PointerType.Shared and
+            rhs_ty.pointer.pointer_type == Parser.PointerType.Owned) and lhs_ty.pointer.target == rhs_ty.pointer.target and (lhs_ty.pointer.optional == rhs_ty.pointer.optional or lhs_ty.pointer.optional);
     } else if (std.mem.eql(u8, @tagName(lhs_ty), "raw_buffer") and std.mem.eql(u8, @tagName(rhs_ty), "raw_buffer")) {
         unreachable;
     } else if (std.mem.eql(u8, @tagName(lhs_ty), "fun") and std.mem.eql(u8, @tagName(rhs_ty), "fun")) {
@@ -687,6 +693,228 @@ pub fn typecheckFun(self: *Typechecker, fun_id: FuncId) !void {
     infer.*.inference_vars = local_inference;
 }
 
+pub fn typecheckStruct(self: *Typechecker, typename: Parser.NodeId, fields: std.ArrayList(Parser.NodeId), methods: std.ArrayList(Parser.NodeId), explicit_no_alloc: bool, base_class: ?Parser.NodeId) !TypeId {
+    const node_type = self.compiler.getNode(typename);
+    var _name: Parser.NodeId = undefined;
+    var params: ?Parser.NodeId = null;
+    switch (node_type) {
+        .type => |ty| {
+            _name = ty.name;
+            params = ty.params;
+        },
+        else => @panic("internal error: struct does not have type as name"),
+    }
+
+    var has_pointers = false;
+    var generics_params = std.ArrayList(TypeId).init(self.alloc);
+
+    try self.enterScope();
+
+    if (params) |p| {
+        var _params = std.ArrayList(Parser.NodeId).init(self.alloc);
+        switch (self.compiler.getNode(p)) {
+            .params => |pr| {
+                _params = pr;
+            },
+            else => @panic("internal error: struct generic params are not proper ast node"),
+        }
+
+        for (_params.items) |param| {
+            const type_id = try self.compiler.freshTypeVariable(param);
+
+            // be conservative and assume generic parameters might be pointers
+            has_pointers = true;
+            try generics_params.append(type_id);
+
+            const type_var_name = self.compiler.getSource(param);
+            try self.addTypeToScope(type_var_name, type_id);
+        }
+    }
+
+    const struct_name = self.compiler.getSource(_name);
+
+    const type_id = try self.compiler.pushType(.{
+        .@"struct" = .{
+            .generic_params = generics_params,
+            .fields = std.ArrayList(TypeField).init(self.alloc),
+            .is_allocator = false, // will be replaced later
+        },
+    });
+
+    try self.addTypeToScope(struct_name, type_id);
+    try self.addTypeToScope("Self", type_id);
+
+    var field_name: Parser.NodeId = undefined;
+    var field_type: Parser.NodeId = undefined;
+    var member_access: Parser.MemberAccess = undefined;
+    var output_fields = std.ArrayList(TypeField).init(self.alloc);
+    for (fields.items) |field| {
+        switch (self.compiler.getNode(field)) {
+            .field => |f| {
+                member_access = f.member_access;
+                field_name = f.name;
+                field_type = f.typename;
+            },
+            else => @panic("internal error: field expected inside of struct typechecking"),
+        }
+
+        const field_name_text = self.compiler.getSource(field_name);
+        const field_type_id = try self.typecheckTypename(field_type);
+
+        if (!self.compiler.isCopyableType(field_type)) {
+            has_pointers = true;
+        }
+
+        try output_fields.append(TypeField{
+            .member_access = member_access,
+            .name = field_name_text,
+            .ty = field_type_id,
+            .where_defined = field_name,
+        });
+    }
+
+    const mut_struct = self.compiler.getMutType(type_id);
+    switch (mut_struct.*) {
+        .@"struct" => {
+            mut_struct.*.@"struct".fields = output_fields;
+            if (explicit_no_alloc) {
+                mut_struct.*.@"struct".is_allocator = false;
+            } else {
+                mut_struct.*.@"struct".is_allocator = has_pointers;
+            }
+        },
+        else => @panic("internal error: previously inserted struct can't be found"),
+    }
+
+    if (!(methods.items.len == 0)) {
+        try self.enterScope();
+        try self.addTypeToScope("self", type_id);
+
+        var fun_ids = std.ArrayList(FuncId).init(self.alloc);
+        var virtual_fun_ids = std.ArrayList(FuncId).init(self.alloc);
+
+        var _name0: Parser.NodeId = undefined;
+        var _type_params: ?Parser.NodeId = null;
+        var _params: Parser.NodeId = undefined;
+        var lifetime_annotations = std.ArrayList(Parser.NodeId).init(self.alloc);
+        var return_ty: ?Parser.NodeId = null;
+        var initial_node_id: ?Parser.NodeId = null;
+        var _block: ?Parser.NodeId = null;
+        var _is_external = false;
+        for (methods.items) |method| {
+            switch (self.compiler.getNode(method)) {
+                .fun => |f| {
+                    _name0 = f.name;
+                    _type_params = f.type_params;
+                    _params = f.params;
+                    lifetime_annotations = f.lifetime_annotations;
+                    return_ty = f.return_ty;
+                    initial_node_id = f.initial_node_id;
+                    _block = f.block;
+                    _is_external = f.is_extern;
+                },
+                else => {
+                    try self.@"error"("internal error: can't find method definition during typecheck", method);
+                    return VOID_TYPE_ID;
+                },
+            }
+
+            const fun_id = try self.typecheckFunPredecl(_name0, _type_params, _params, &lifetime_annotations, return_ty, initial_node_id, _block, _is_external);
+
+            if (_block == null and !_is_external) {
+                try virtual_fun_ids.append(fun_id);
+            } else {
+                try fun_ids.append(fun_id);
+            }
+        }
+
+        if (base_class) |base| {
+            const class = self.findTypeInScope(base).?;
+
+            var base_classes = std.ArrayList(TypeId).init(self.alloc);
+            try base_classes.append(class);
+
+            if (self.compiler.base_classes.get(class)) |base_base_class| {
+                try base_classes.appendSlice(base_base_class.items);
+            }
+
+            try self.compiler.base_classes.put(type_id, base_classes);
+
+            const _methods = self.compiler.methodsOnType(class);
+            const virtual_methods = self.compiler.virtualMethodsOnType(class);
+
+            // TODO: proper equality for methods, have some way to check equality between two functions to see if one is an implementation of the other
+            var implemented_methods = std.ArrayList([]const u8).init(self.alloc);
+
+            for (_methods.items) |method| {
+                const fun = self.compiler.functions.items[method];
+                const method_name = self.compiler.getSource(fun.name);
+                try implemented_methods.append(method_name);
+                try fun_ids.append(method);
+            }
+
+            for (virtual_methods.items) |method| {
+                const fun = self.compiler.functions.items[method];
+                const method_name = self.compiler.getSource(fun.name);
+                if (!contains(implemented_methods, method_name)) {
+                    try virtual_fun_ids.append(method);
+                }
+            }
+        }
+
+        try self.compiler.insertMethodsOnType(type_id, fun_ids);
+        try self.compiler.insertVirtualMethodsOnType(type_id, virtual_fun_ids);
+
+        for (fun_ids.items) |fun_id| {
+            try self.typecheckFun(fun_id);
+        }
+
+        self.exitScope();
+    }
+
+    self.exitScope();
+    try self.addTypeToScope(struct_name, type_id);
+    try self.compiler.type_resolution.put(typename, type_id);
+
+    return type_id;
+}
+
+pub fn varWasPreviouslyMoved(self: *Typechecker, var_id: VarId) !?Parser.NodeId {
+    var i: i32 = @intCast(self.scope.items.len - 1);
+    while (i >= 0) : (i -= 1) {
+        const scope_frame = self.scope.items[@intCast(i)];
+        if (scope_frame.move_owned_values.get(var_id)) |where_moved| {
+            return where_moved;
+        }
+    }
+
+    return null;
+}
+
+pub fn maybeMoveVariable(self: *Typechecker, node_id: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !void {
+    switch (self.compiler.getNode(node_id)) {
+        .name => {
+            const var_id = self.compiler.var_resolution.get(node_id);
+
+            // Assume the mistyped variable error has already been reported
+            if (var_id) |v_id| {
+                var var_type = self.compiler.getVariable(v_id).ty;
+                var_type = self.compiler.resolveType(var_type, local_inferences);
+                const var_ty = self.compiler.getType(var_type);
+
+                switch (var_ty) {
+                    .pointer => |ptr_ty| {
+                        if (ptr_ty.pointer_type == .Owned) {
+                            const last = self.scope.items.len - 1;
+                            try self.scope.items[last].move_owned_values.put(v_id, node_id);
+                        }
+                    },
+                }
+            }
+        },
+    }
+}
+
 pub fn typecheckBlock(self: *Typechecker, node_id: Parser.NodeId, block_id: Parser.BlockId, local_inferences: *std.ArrayList(TypeId)) !Scope {
     var funs = std.ArrayList(FuncId).init(self.alloc);
 
@@ -707,6 +935,18 @@ pub fn typecheckBlock(self: *Typechecker, node_id: Parser.NodeId, block_id: Pars
                     continue;
                 }
                 try funs.append(try self.typecheckFunPredecl(f.name, f.type_params, f.params, @constCast(&f.lifetime_annotations), f.return_ty, f.initial_node_id, f.block, f.is_extern));
+            },
+            .@"struct" => |*s| {
+                if (self.compiler.type_resolution.get(s.typename)) |type_id| {
+                    // we've already created this. Instead of recreating it, put the previous
+                    // definition into scope
+                    const struct_name = self.compiler.getSource(s.typename);
+
+                    try self.addTypeToScope(struct_name, type_id);
+                    continue;
+                }
+
+                _ = try self.typecheckStruct(s.typename, s.fields, s.methods, s.explicit_no_alloc, s.base_class);
             },
             else => {},
         }
@@ -905,11 +1145,76 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
             var args = c.args;
             node_type = try self.typecheckCall(node_id, head, &args, local_inferences);
         },
+        .member_access => |member| {
+            const target = member.target;
+            const field = member.field;
+
+            var type_id = try self.typecheckNode(target, local_inferences);
+            type_id = self.compiler.resolveType(type_id, local_inferences);
+
+            const target_name = self.compiler.getSource(target);
+            type_id = self.compiler.getUnderlyingTypeId(type_id);
+
+            const field_name = self.compiler.getSource(field);
+            switch (self.compiler.getType(type_id)) {
+                .@"struct" => |s| {
+                    for (s.fields.items) |type_field| {
+                        const _type_id = type_field.ty;
+
+                        if (std.mem.eql(u8, field_name, type_field.name)) {
+                            if (type_field.member_access == Parser.MemberAccess.Private and !std.mem.eql(u8, target_name, ".") and !std.mem.eql(u8, target_name, "self")) {
+                                // We're private and not accessing 'self'
+                                try self.@"error"("access of private field", field);
+                            }
+
+                            self.compiler.setNodeType(node_id, _type_id);
+                            self.compiler.setNodeType(field, _type_id);
+                            return _type_id;
+                        }
+                    }
+
+                    const methods = self.compiler.methodsOnType(type_id);
+                    for (methods.items) |method| {
+                        const fun = self.compiler.functions.items[method];
+                        const method_name = self.compiler.getSource(fun.name);
+                        if (std.mem.eql(u8, field_name, method_name)) {
+                            try self.compiler.fun_resolution.put(field, method);
+                            try self.compiler.fun_resolution.put(node_id, method);
+                            return try self.compiler.findOrCreateType(.{ .fun = .{ .params = fun.params, .ret = fun.return_type } });
+                        }
+                    }
+
+                    const virtual_methods = self.compiler.virtualMethodsOnType(type_id);
+                    for (virtual_methods.items) |method| {
+                        const fun = self.compiler.functions.items[method];
+                        const method_name = self.compiler.getSource(fun.name);
+                        if (std.mem.eql(u8, field_name, method_name)) {
+                            try self.compiler.fun_resolution.put(field, method);
+                            try self.compiler.fun_resolution.put(node_id, method);
+                            return try self.compiler.findOrCreateType(.{ .fun = .{ .params = fun.params, .ret = fun.return_type } });
+                        }
+                    }
+
+                    try self.@"error"("unknown field or method", field);
+                    node_type = UNKNOWN_TYPE_ID;
+                },
+                .@"enum" => unreachable,
+                else => {
+                    try self.@"error"("field or method access on type without fields or methods", target);
+                    node_type = UNKNOWN_TYPE_ID;
+                },
+            }
+        },
         // ignore here, since we checked this in an earlier pass
         .fun, .@"struct", .@"enum", .expern_type => node_type = VOID_TYPE_ID,
         .statement => |stmt| {
             _ = try self.typecheckNode(stmt, local_inferences);
             node_type = VOID_TYPE_ID;
+        },
+        .new => |_new| {
+            const allocation_type = _new.pointer_type;
+            const allocation_node_id = _new.allocated;
+            node_type = try self.typecheckNew(allocation_type, allocation_node_id, local_inferences);
         },
         else => unreachable,
     }
@@ -944,6 +1249,215 @@ pub fn typecheckLvalue(self: *Typechecker, lvalue: Parser.NodeId, local_inferenc
             unreachable;
         },
     }
+}
+
+pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {
+    switch (self.compiler.getType(type_id)) {
+        .bool, .f64, .i64, .void => return true,
+        .@"struct" => |s| {
+            const generic_params = s.generic_params;
+            const fields = s.fields;
+
+            for (generic_params.items) |generic_param| {
+                if (!self.typeIsOwned(generic_param)) {
+                    return false;
+                }
+            }
+
+            for (fields.items) |field| {
+                if (field.member_access == Parser.MemberAccess.Private and !self.typeIsOwned(field.ty)) {
+                    // TODO add a note
+                    return false;
+                }
+            }
+
+            const methods = self.compiler.methodsOnType(type_id);
+            for (methods.items) |method| {
+                const fun = self.compiler.functions.items[method];
+                const return_node = fun.return_node;
+                var self_is_mutable = false;
+
+                const params = fun.params;
+
+                for (params.items) |param| {
+                    if (std.mem.eql(u8, param.name, "self")) {
+                        const var_id = param.var_id;
+
+                        if (self.compiler.getVariable(var_id).is_mutable) {
+                            self_is_mutable = true;
+                        }
+                    }
+                }
+
+                const return_type = fun.return_type;
+                if (self_is_mutable) {
+                    for (params.items) |param| {
+                        const var_id = param.var_id;
+                        const variable = self.compiler.getVariable(var_id);
+
+                        const var_type_id = variable.ty;
+                        const where_defined = variable.where_defined;
+
+                        if (!self.typeIsOwned(var_type_id) and !std.mem.eql(u8, param.name, "self")) {
+                            // TODO add a note
+                            _ = where_defined;
+                            return false;
+                        }
+                    }
+                }
+
+                if (!self.typeIsOwned(return_type)) {
+                    if (return_node) |_| {
+                        // TODO add a not
+                    }
+                    return false;
+                }
+            }
+
+            return true;
+        },
+        .pointer => |ptr| {
+            return ptr.pointer_type == .Owned;
+        },
+        .@"enum" => unreachable,
+        else => return true,
+    }
+}
+
+pub fn typecheckNew(self: *Typechecker, pointer_type: Parser.PointerType, node_id: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
+    switch (self.compiler.getNode(node_id)) {
+        .call => |call| {
+            const head = call.head;
+            const args = call.args;
+
+            var type_id = self.findTypeInScope(head);
+            if (type_id == null) {
+                try self.@"error"("unknown type in allocation", head);
+                return UNKNOWN_TYPE_ID;
+            }
+
+            const output_type = try self.compiler.findOrCreateType(.{
+                .pointer = .{
+                    .pointer_type = pointer_type,
+                    .optional = false,
+                    .target = type_id.?,
+                },
+            });
+
+            // FIXME: remember the reason why something isn't safe to be owned
+            // so we can give a better error
+            if (pointer_type == .Owned and !self.typeIsOwned(type_id.?)) {
+                try self.@"error"("tried to create owned pointer on type that shares its pointers", node_id);
+            }
+
+            type_id = self.compiler.getUnderlyingTypeId(type_id.?);
+
+            var replacements = std.AutoHashMap(TypeId, TypeId).init(self.alloc);
+
+            switch (self.compiler.getType(type_id.?)) {
+                .@"struct" => |s| {
+                    var fields: std.ArrayList(TypeField) = s.fields;
+                    if (self.compiler.base_classes.get(type_id.?)) |base_classes| {
+                        for (base_classes.items) |base| {
+                            switch (self.compiler.getType(base)) {
+                                .@"struct" => |sn| {
+                                    try fields.appendSlice(sn.fields.items);
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+
+                    if (args.items.len != fields.items.len) {
+                        const error_msg = try std.fmt.allocPrint(self.alloc, "mismatch in number of arguments. expected {d}, found {d}", .{ fields.items.len, args.items.len });
+                        try self.@"error"(error_msg, head);
+                    }
+
+                    arg_label: for (args.items) |arg| {
+                        switch (self.compiler.getNode(arg)) {
+                            .named_value => |nval| {
+                                const _name = nval.name;
+                                const _value = nval.value;
+
+                                const field_name = self.compiler.getSource(_name);
+
+                                for (fields.items) |type_field| {
+                                    if (std.mem.eql(u8, field_name, type_field.name)) {
+                                        const member_access = type_field.member_access;
+
+                                        if (member_access == Parser.MemberAccess.Private) {
+                                            const result = self.findTypeInScopeByName("Self");
+
+                                            if (result) |scope_type_id| {
+                                                if (scope_type_id != type_id.?) {
+                                                    // FIXME: add a hint to say you need to create your own constructor
+                                                    try self.@"error"("'new' used on private member field from outside struct or class", _name);
+                                                }
+                                            } else {
+                                                try self.@"error"("'new' used on private member field from outside struct or class", _name);
+                                            }
+                                        }
+
+                                        const known_field_type = type_field.ty;
+
+                                        if (self.compiler.isTypeVariable(known_field_type)) {
+                                            const value_type = try self.typecheckNode(_value, local_inferences);
+
+                                            try replacements.put(
+                                                self.compiler.getUnderlyingTypeId(known_field_type),
+                                                self.compiler.getUnderlyingTypeId(value_type),
+                                            );
+
+                                            self.compiler.setNodeType(arg, value_type);
+
+                                            // Set up expected type for inference. Note: if we find concrete values
+                                            // this inference type will be replaced by the concrete type.
+                                            self.compiler.setNodeType(_value, value_type);
+                                        } else {
+                                            self.compiler.setNodeType(arg, known_field_type);
+
+                                            // Set up expected type for inference. Note: if we find concrete values
+                                            // this inference type will be replaced by the concrete type.
+                                            self.compiler.setNodeType(_value, known_field_type);
+
+                                            const value_type = try self.typecheckNode(_value, local_inferences);
+
+                                            if (!self.unifyTypes(known_field_type, value_type, local_inferences)) {
+                                                const error_msg = try std.fmt.allocPrint(self.alloc, "incompatible type for argument, expected: {s}, found: {s}", .{ try self.compiler.prettyType(value_type), try self.compiler.prettyType(known_field_type) });
+                                                try self.@"error"(error_msg, _value);
+                                            }
+                                        }
+                                        continue :arg_label;
+                                    }
+                                }
+                                try self.@"error"("unknown field", _name);
+                                return UNKNOWN_TYPE_ID;
+                            },
+                            else => {
+                                try self.@"error"("unexpected argument in allocation", arg);
+                                return UNKNOWN_TYPE_ID;
+                            },
+                        }
+                    }
+                },
+                else => {
+                    try self.@"error"("internal error: allocation of non-struct type", node_id);
+                    return UNKNOWN_TYPE_ID;
+                },
+            }
+
+            if (!(replacements.count() == 0)) {
+                // TODO initiate generic types
+            } else {
+                return output_type;
+            }
+        },
+        else => {
+            try self.@"error"("expected an allocation call", node_id);
+            return UNKNOWN_TYPE_ID;
+        },
+    }
+    unreachable;
 }
 
 pub fn typecheckVarOrFunction(self: *Typechecker, node_id: Parser.NodeId, var_or_fun_id: ?VarOrFuncId) !TypeId {
@@ -1187,4 +1701,14 @@ pub fn isListEqual(a: []TypeId, b: []TypeId) bool {
     }
 
     return true;
+}
+
+pub fn contains(a: std.ArrayList([]const u8), b: []const u8) bool {
+    for (a.items) |item| {
+        if (std.mem.eql(u8, item, b)) {
+            return true;
+        }
+    }
+
+    return false;
 }
