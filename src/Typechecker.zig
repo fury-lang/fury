@@ -1227,7 +1227,29 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
             const allocation_node_id = _new.allocated;
             node_type = try self.typecheckNew(allocation_type, allocation_node_id, local_inferences);
         },
-        else => unreachable,
+        .@"return" => |ret| {
+            const expected_type = self.findExpectedReturnType();
+
+            if (ret) |return_expr| {
+                const expr_type = try self.typecheckNode(return_expr, local_inferences);
+                if (expected_type) |expected| {
+                    if (!self.unifyTypes(expected, expr_type, local_inferences)) {
+                        const error_msg = try std.fmt.allocPrint(self.alloc, "incompatible type at return, found: {s} expected: {s}", .{ try self.compiler.prettyType(expr_type), try self.compiler.prettyType(expected) });
+                        try self.@"error"(error_msg, return_expr);
+                    }
+                } else {
+                    try self.@"error"("return used outside of a function", return_expr);
+                }
+            } else if (expected_type) |_| {
+                try self.@"error"("return needs value", node_id);
+            } else {
+                try self.@"error"("return used outside of a function", node_id);
+            }
+        },
+        else => {
+            std.debug.print("{any}\n", .{self.compiler.getNode(node_id)});
+            unreachable;
+        },
     }
 
     self.compiler.setNodeType(node_id, node_type);
