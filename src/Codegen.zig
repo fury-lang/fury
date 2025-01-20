@@ -636,7 +636,18 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                         first = false;
                     }
 
-                    // TODO check for member access
+                    // for passing self argument -> box.create()
+                    const check_member = self.compiler.getNode(head);
+                    if (std.mem.eql(u8, @tagName(check_member), "member_access")) {
+                        // A bit of a codegen workaround for now. Because we aren't updating the AST during typecheck,
+                        // we haven't moved the target of the method call to be the first arg. To get around that,
+                        // we'll manually push it in now.
+                        if (!first) {
+                            try output.appendSlice(", ");
+                        }
+                        try self.codegenNode(check_member.member_access.target, local_inferences, output);
+                        first = false;
+                    }
 
                     for (args.items) |arg| {
                         if (!first) {
@@ -647,6 +658,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
 
                         try self.codegenNode(arg, local_inferences, output);
                     }
+
                     try output.append(')');
                 },
                 .node_id => {
@@ -712,20 +724,16 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
 
             const field_name = self.compiler.getSource(member_access.field);
 
-            std.debug.print("name-> {s}\n", .{field_name});
-
             var type_id = self.compiler.getNodeType(member_access.target);
-            type_id = self.compiler.resolveNodeType(type_id, local_inferences);
+            type_id = self.compiler.resolveType(type_id, local_inferences);
             type_id = self.compiler.getUnderlyingTypeId(type_id);
 
             // FIXME: we can do this because the fields are unique, but we probably want
             // the resolution to tell us which one to use
-            std.debug.print("type: {any}\n", .{self.compiler.getType(type_id)});
             switch (self.compiler.getType(type_id)) {
                 .@"struct" => |s| {
                     var found = false;
                     for (s.fields.items, 0..) |type_field, idx| {
-                        std.debug.print("{s}     {s}    type_id: {d}\n", .{ type_field.name, field_name, type_id });
                         if (std.mem.eql(u8, type_field.name, field_name)) {
                             try output.appendSlice("field_");
                             const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
@@ -737,13 +745,12 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                         }
                     }
 
-                    // if (!found) {
-                    //     @panic("internal error: field could not be codegen'd");
-                    // }
+                    if (!found) {
+                        @panic("internal error: field could not be codegen'd");
+                    }
                 },
                 else => {
-                    std.debug.print("not a struct type\n", .{});
-                    // @panic("internal error: field access on non-struct");
+                    @panic("internal error: field access on non-struct");
                 },
             }
         },

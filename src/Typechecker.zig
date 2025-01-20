@@ -648,7 +648,7 @@ pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params:
                         const tt = try self.typecheckTypename(ty);
 
                         const var_id = try self.defineVariable(_name, tt, is_mutable, name);
-                        self.compiler.setNodeType(_name, ty);
+                        self.compiler.setNodeType(_name, tt);
                         try fun_params.append(Param.new(_param_name, var_id));
                     },
                     else => try self.@"error"("expected function parameter", unchecked_param),
@@ -1127,7 +1127,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                     const lhs_ty = try self.typecheckNode(lhs, local_inferences);
 
                     // use a quick inference for comparison with 'none'
-                    if (@TypeOf(self.compiler.getNode(rhs)) == @TypeOf(Parser.AstNode.none)) {
+                    if (std.mem.eql(u8, @tagName(self.compiler.getNode(rhs)), "none")) {
                         self.compiler.setNodeType(rhs, lhs_ty);
                     }
 
@@ -1200,6 +1200,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
             node_type = try self.typecheckCall(node_id, head, &args, local_inferences);
         },
         .member_access => |member| {
+            // print the member
             const target = member.target;
             const field = member.field;
 

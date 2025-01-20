@@ -97,31 +97,62 @@ pub fn print(self: *Compiler) void {
     std.debug.print("Nodes:\n", .{});
     std.debug.print("num nodes: {}\n", .{self.ast_node.items.len});
     for (self.ast_node.items, 0..) |node, node_id| {
-        std.debug.print("{d} {any}\n", .{ node_id, node });
+        // std.debug.print("{d} {any}\n", .{ node_id, node });
+        std.debug.print("{d} {s} -> {s},    type: {s}\n", .{ node_id, @tagName(node), self.getSource(node_id), self.prettyType(self.node_types.items[node_id]) catch unreachable });
     }
 
-    std.debug.print("Blocks:\n", .{});
+    std.debug.print("\nBlocks:\n", .{});
+    std.debug.print("num blocks: {}\n", .{self.blocks.items.len});
     for (self.blocks.items, 0..) |block, block_id| {
-        std.debug.print("{d} {any}\n", .{ block_id, block });
+        std.debug.print("{d} nodes: [", .{block_id});
+        for (block.nodes.items) |node| {
+            std.debug.print("{d}, ", .{node});
+        }
+        if (block.may_locally_allocate) |allocate| {
+            std.debug.print("] may_locally_allocates: {d}, \n", .{allocate});
+        } else {
+            std.debug.print("] may_locally_allocates: null\n", .{});
+        }
     }
 
-    std.debug.print("Variables:\n", .{});
+    std.debug.print("\nVariables:\n", .{});
+    std.debug.print("num variables: {}\n", .{self.variables.items.len});
     for (self.variables.items, 0..) |_var, var_id| {
-        std.debug.print("{d} {any}\n", .{ var_id, _var });
+        std.debug.print("{d} name: {s}, type_id: {}, is_mutable: {}, defined_in: {s}, defined_node: {}\n", .{ var_id, self.getSource(_var.name), _var.ty, _var.is_mutable, self.getSource(_var.where_defined), _var.where_defined });
     }
 
-    std.debug.print("Functions:\n", .{});
+    std.debug.print("\nFunctions:\n", .{});
+    std.debug.print("num functions: {}\n", .{self.functions.items.len});
     for (self.functions.items, 0..) |fun, fun_id| {
         // std.debug.print("{s}\n", .{self.getSource(fun.name)});
-        std.debug.print("{d} {any}\n", .{ fun_id, fun });
+        std.debug.print("{d} {s}\n", .{ fun_id, self.getSource(fun.name) });
     }
 
-    std.debug.print("Types:\n", .{});
+    std.debug.print("\nTypes:\n", .{});
+    std.debug.print("num types: {}\n", .{self.types.items.len});
     for (self.types.items, 0..) |ty, ty_id| {
-        std.debug.print("{d} {any}\n", .{ ty_id, ty });
+        // std.debug.print("{d} {any}\n", .{ ty_id, ty });
+        std.debug.print("{d} {s}\n", .{ ty_id, @tagName(ty) });
     }
 
-    // std.debug.print("Call resolution:\n", .{});
+    std.debug.print("\nCall resolution:\n", .{});
+    std.debug.print("num calls: {}\n", .{self.call_resolution.count()});
+    var iter = self.call_resolution.iterator();
+    while (iter.next()) |call| {
+        const node_id_source = self.getSource(call.key_ptr.*);
+        var call_target: []u8 = "";
+        switch (call.value_ptr.*) {
+            .function => {
+                call_target = std.fmt.allocPrint(self.alloc, "function {d}", .{call.value_ptr.*.function}) catch unreachable;
+            },
+            .node_id => {
+                call_target = @constCast(self.getSource(call.value_ptr.*.node_id));
+            },
+        }
+        std.debug.print("node_id: {s} -> target: {s}\n", .{ node_id_source, call_target });
+    }
+
+    std.debug.print("\n", .{});
 }
 
 pub fn printErrors(self: *Compiler, err: *Errors.SourceError) !void {
