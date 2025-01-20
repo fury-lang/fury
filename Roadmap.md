@@ -1,2 +1,4 @@
 - Self hosting
 - Formatter
+- Editor support
+- Better errors

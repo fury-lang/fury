@@ -58,7 +58,7 @@ const EnumConstructor = struct {
 
 pub const CallTarget = union(enum) {
     function: Typechecker.FuncId,
-    // enum_constructor:
+    enum_constructor: EnumConstructor,
     node_id: Parser.NodeId,
 };
 
@@ -148,6 +148,7 @@ pub fn print(self: *Compiler) void {
             .node_id => {
                 call_target = @constCast(self.getSource(call.value_ptr.*.node_id));
             },
+            else => {},
         }
         std.debug.print("node_id: {s} -> target: {s}\n", .{ node_id_source, call_target });
     }

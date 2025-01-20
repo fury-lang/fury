@@ -745,6 +745,146 @@ pub fn typecheckFun(self: *Typechecker, fun_id: FuncId) !void {
     infer.*.inference_vars = local_inference;
 }
 
+pub fn typecheckEnum(self: *Typechecker, typename: Parser.NodeId, cases: std.ArrayList(Parser.NodeId), methods: std.ArrayList(Parser.NodeId)) !TypeId {
+    var _name: Parser.NodeId = undefined;
+    var params: ?Parser.NodeId = null;
+    switch (self.compiler.getNode(typename)) {
+        .type => |ty| {
+            _name = ty.name;
+            params = ty.params;
+        },
+        else => {
+            @panic("internal error: enum does not have type as name");
+        },
+    }
+
+    var generic_params = std.ArrayList(TypeId).init(self.alloc);
+
+    try self.enterScope();
+
+    if (params) |pr| {
+        var _params = std.ArrayList(Parser.NodeId).init(self.alloc);
+        switch (self.compiler.getNode(pr)) {
+            .params => |p| {
+                _params = p;
+            },
+            else => @panic("internal error: enum does not have type as name"),
+        }
+
+        for (_params.items) |param| {
+            const type_id = try self.compiler.freshTypeVariable(param);
+
+            try generic_params.append(type_id);
+
+            const type_var_name = self.compiler.getSource(param);
+            try self.addTypeToScope(type_var_name, type_id);
+        }
+    }
+
+    const enum_name = self.compiler.getSource(_name);
+
+    var output_cases = std.ArrayList(EnumVariant).init(self.alloc);
+    for (cases.items) |enum_case| {
+        switch (self.compiler.getNode(enum_case)) {
+            .enum_case => |e_case| {
+                const case_name = self.compiler.getSource(e_case.name);
+                if (e_case.payload) |payload| {
+                    if (payload.items.len == 0) {
+                        try self.@"error"("missing payload in enum case", e_case.name);
+                        break;
+                    }
+
+                    switch (self.compiler.getNode(payload.items[0])) {
+                        .named_value => {
+                            var fields = std.ArrayList(EnumStructVariant).init(self.alloc);
+
+                            const payload_cp = payload.items;
+                            for (payload_cp) |item| {
+                                switch (self.compiler.getNode(item)) {
+                                    .named_value => |named_value| {
+                                        const field_name = self.compiler.getSource(named_value.name);
+                                        const field_ty = try self.typecheckTypename(named_value.value);
+
+                                        try fields.append(.{ .name = field_name, .ty = field_ty });
+                                    },
+                                    else => try self.@"error"("expected 'name: type' for each field in enum case", item),
+                                }
+                            }
+
+                            try output_cases.append(.{ .@"struct" = .{
+                                .name = case_name,
+                                .params = fields,
+                            } });
+                        },
+                        .type => {
+                            const type_id = try self.typecheckTypename(payload.items[0]);
+
+                            try output_cases.append(.{ .single = .{
+                                .name = case_name,
+                                .param = type_id,
+                            } });
+                        },
+                        else => {
+                            try self.@"error"("unexpected node in enum cases", payload.items[0]);
+                        },
+                    }
+                } else {
+                    try output_cases.append(.{ .simple = .{ .name = case_name } });
+                }
+            },
+            else => try self.@"error"("expect enum case inside of enum", enum_case),
+        }
+    }
+
+    const type_id = try self.compiler.pushType(.{
+        .@"enum" = .{
+            .generic_params = generic_params,
+            .variants = output_cases,
+        },
+    });
+
+    _ = try self.compiler.pushType(.{
+        .pointer = .{
+            .pointer_type = Parser.PointerType.Owned,
+            .optional = false,
+            .target = type_id,
+        },
+    });
+
+    try self.addTypeToScope(enum_name, type_id);
+
+    if (!(methods.items.len == 0)) {
+        try self.enterScope();
+
+        try self.addTypeToScope("self", type_id);
+
+        var fun_ids = std.ArrayList(FuncId).init(self.alloc);
+        for (methods.items) |method| {
+            switch (self.compiler.getNode(method)) {
+                .fun => |f| {
+                    const fun_id = try self.typecheckFunPredecl(f.name, f.type_params, f.params, @constCast(&f.lifetime_annotations), f.return_ty, f.initial_node_id, f.block, f.is_extern);
+                    try fun_ids.append(fun_id);
+                },
+                else => {
+                    try self.@"error"("internal error: can't find method definition during typecheck", method);
+                    return VOID_TYPE_ID;
+                },
+            }
+        }
+        try self.compiler.insertMethodsOnType(type_id, fun_ids);
+        for (fun_ids.items) |fun_id| {
+            try self.typecheckFun(fun_id);
+        }
+        self.exitScope();
+    }
+
+    self.exitScope();
+    try self.addTypeToScope(enum_name, type_id);
+    try self.compiler.type_resolution.put(typename, type_id);
+
+    return type_id;
+}
+
 pub fn typecheckStruct(self: *Typechecker, typename: Parser.NodeId, fields: std.ArrayList(Parser.NodeId), methods: std.ArrayList(Parser.NodeId), explicit_no_alloc: bool, base_class: ?Parser.NodeId) !TypeId {
     const node_type = self.compiler.getNode(typename);
     var _name: Parser.NodeId = undefined;
@@ -1002,6 +1142,18 @@ pub fn typecheckBlock(self: *Typechecker, node_id: Parser.NodeId, block_id: Pars
 
                 _ = try self.typecheckStruct(s.typename, s.fields, s.methods, s.explicit_no_alloc, s.base_class);
             },
+            .@"enum" => |*e| {
+                if (self.compiler.type_resolution.get(e.typename)) |type_id| {
+                    // we've already created this. Instead of recreating it, put the previous
+                    // definition into scope
+                    const struct_name = self.compiler.getSource(e.typename);
+
+                    try self.addTypeToScope(struct_name, type_id);
+                    continue;
+                }
+
+                _ = try self.typecheckEnum(e.typename, e.cases, e.methods);
+            },
             else => {},
         }
     }
@@ -1253,7 +1405,24 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                     try self.@"error"("unknown field or method", field);
                     node_type = UNKNOWN_TYPE_ID;
                 },
-                .@"enum" => unreachable,
+                .@"enum" => {
+                    const methods = self.compiler.methodsOnType(type_id);
+                    for (methods.items) |method| {
+                        const fun = self.compiler.functions.items[method];
+                        const method_name = self.compiler.getSource(fun.name);
+                        if (std.mem.eql(u8, field_name, method_name)) {
+                            try self.compiler.fun_resolution.put(field, method);
+                            try self.compiler.fun_resolution.put(node_id, method);
+                            return try self.compiler.findOrCreateType(.{ .fun = .{
+                                .params = fun.params,
+                                .ret = fun.return_type,
+                            } });
+                        }
+                    }
+
+                    try self.@"error"("unknown method", field);
+                    node_type = UNKNOWN_TYPE_ID;
+                },
                 else => {
                     try self.@"error"("field or method access on type without fields or methods", target);
                     node_type = UNKNOWN_TYPE_ID;
@@ -1289,6 +1458,9 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
             } else {
                 try self.@"error"("return used outside of a function", node_id);
             }
+        },
+        .namespaced_lookup => |namespaced_lookup| {
+            node_type = try self.typecheckNamespacedLookup(namespaced_lookup.namespace, namespaced_lookup.item, local_inferences);
         },
         else => {
             std.debug.print("{any}\n", .{self.compiler.getNode(node_id)});
@@ -1435,7 +1607,35 @@ pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {
         .pointer => |ptr| {
             return ptr.pointer_type == .Owned;
         },
-        .@"enum" => unreachable,
+        .@"enum" => |e| {
+            const generic_params = e.generic_params;
+            const variants = e.variants;
+
+            for (generic_params.items) |generic_param| {
+                if (!self.typeIsOwned(generic_param)) {
+                    return false;
+                }
+            }
+
+            for (variants.items) |variant| {
+                switch (variant) {
+                    .single => |single| {
+                        if (!self.typeIsOwned(single.param)) {
+                            return false;
+                        }
+                    },
+                    .@"struct" => |_struct| {
+                        for (_struct.params.items) |param_type| {
+                            if (!self.typeIsOwned(param_type.ty)) {
+                                return false;
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+            return true;
+        },
         else => return true,
     }
 }
@@ -1574,6 +1774,179 @@ pub fn typecheckNew(self: *Typechecker, pointer_type: Parser.PointerType, node_i
         },
     }
     unreachable;
+}
+
+pub fn typecheckNamespacedLookup(self: *Typechecker, namespace: Parser.NodeId, item: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
+    // TODO check for module imports
+    if (self.findTypeInScope(namespace)) |type_id| {
+        return try self.typecheckNamespacedTypeLookup(namespace, @constCast(&type_id), item, local_inferences);
+    } else {
+        try self.@"error"("could not find namespace", namespace);
+        return VOID_TYPE_ID;
+    }
+}
+
+// lookup what kind of type we're working with (struct vs enum)
+// resolve matching method
+// typecheck against the resolved method
+pub fn typecheckNamespacedTypeLookup(self: *Typechecker, namespace: Parser.NodeId, type_id: *TypeId, item: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
+    switch (self.compiler.getType(type_id.*)) {
+        .@"struct" => {
+            // TODO
+            unreachable;
+        },
+        .@"enum" => |e| {
+            const cases = e.variants;
+
+            switch (self.compiler.getNode(item)) {
+                .call => |call| {
+                    const head = call.head;
+                    const args = call.args;
+                    const case_name = self.compiler.getSource(head);
+
+                    for (cases.items, 0..) |case, case_offset| {
+                        switch (case) {
+                            .single => |single| {
+                                if (std.mem.eql(u8, single.name, case_name)) {
+                                    const param = single.param;
+                                    if (args.items.len == 1) {
+                                        const arg_type_id = try self.typecheckNode(args.items[0], local_inferences);
+
+                                        if (self.compiler.isTypeVariable(param)) {
+                                            var replacements = std.AutoHashMap(TypeId, TypeId).init(self.alloc);
+                                            try replacements.put(
+                                                self.compiler.getUnderlyingTypeId(param),
+                                                self.compiler.getUnderlyingTypeId(arg_type_id),
+                                            );
+
+                                            // TODO initiate generic types
+                                        } else if (!self.unifyTypes(param, arg_type_id, local_inferences)) {
+                                            try self.@"error"("incompatible type for enum case", args.items[0]);
+                                            return VOID_TYPE_ID;
+                                        }
+
+                                        return self.compiler.findOrCreateType(.{
+                                            .pointer = .{
+                                                .pointer_type = .Shared,
+                                                .optional = false,
+                                                .target = type_id.*,
+                                            },
+                                        });
+                                    } else {
+                                        const error_msg = try std.fmt.allocPrint(self.alloc, "enum case has {} values, but should have 1", .{args.items.len});
+                                        try self.@"error"(error_msg, item);
+                                        return VOID_TYPE_ID;
+                                    }
+                                }
+                            },
+                            .@"struct" => |s| {
+                                if (std.mem.eql(u8, s.name, case_name)) {
+                                    if (args.items.len == 1) {
+                                        var replacements = std.AutoHashMap(TypeId, TypeId).init(self.alloc);
+
+                                        for (args.items, 0..) |arg, idx| {
+                                            const param_name = s.params.items[idx].name;
+                                            const param_type_id = s.params.items[idx].ty;
+
+                                            switch (self.compiler.getNode(arg)) {
+                                                .named_value => |named_value| {
+                                                    const name0 = named_value.name;
+                                                    const value = named_value.value;
+
+                                                    const name_content = self.compiler.getSource(name0);
+
+                                                    if (!std.mem.eql(u8, name_content, param_name)) {
+                                                        try self.@"error"("name mismatch in enum case", name0);
+                                                        return VOID_TYPE_ID;
+                                                    }
+
+                                                    const arg_type_id = try self.typecheckNode(value, local_inferences);
+
+                                                    if (self.compiler.isTypeVariable(param_type_id)) {
+                                                        try replacements.put(
+                                                            param_type_id,
+                                                            arg_type_id,
+                                                        );
+                                                    } else if (!self.unifyTypes(param_type_id, arg_type_id, local_inferences)) {
+                                                        try self.@"error"("incompatible type for enum case", arg);
+                                                        return VOID_TYPE_ID;
+                                                    }
+                                                },
+                                                else => {},
+                                            }
+                                        }
+
+                                        // TODO initiate generic types
+
+                                        try self.compiler.call_resolution.put(head, Compiler.CallTarget{ .enum_constructor = .{
+                                            .type_id = type_id.*,
+                                            .case_offset = case_offset,
+                                        } });
+
+                                        return self.compiler.findOrCreateType(.{
+                                            .pointer = .{
+                                                .pointer_type = .Shared,
+                                                .optional = false,
+                                                .target = type_id.*,
+                                            },
+                                        });
+                                    } else {
+                                        const error_msg = try std.fmt.allocPrint(self.alloc, "enum case has {} values, but should have 1", .{args.items.len});
+                                        try self.@"error"(error_msg, item);
+                                        return VOID_TYPE_ID;
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+
+                    const call_name = self.compiler.getSource(head);
+
+                    const methods = self.compiler.methodsOnType(type_id.*);
+                    for (methods.items) |method| {
+                        const method_name = self.compiler.getSource(self.compiler.functions.items[method].name);
+                        if (std.mem.eql(u8, call_name, method_name)) {
+                            return try self.typecheckCallWithFunId(head, method, @constCast(&args), null, local_inferences);
+                        }
+                    }
+
+                    try self.@"error"("could not find enum case when created enum value", item);
+                },
+                .name => {
+                    const case_name = self.compiler.getSource(item);
+
+                    for (cases.items, 0..) |case, case_offset| {
+                        switch (case) {
+                            .simple => |simple| {
+                                if (std.mem.eql(u8, simple.name, case_name)) {
+                                    try self.compiler.call_resolution.put(item, Compiler.CallTarget{ .enum_constructor = .{
+                                        .type_id = type_id.*,
+                                        .case_offset = case_offset,
+                                    } });
+
+                                    return self.compiler.findOrCreateType(.{
+                                        .pointer = .{
+                                            .pointer_type = .Shared,
+                                            .optional = false,
+                                            .target = type_id.*,
+                                        },
+                                    });
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+
+                    try self.@"error"("can't find match enum case", item);
+                },
+                else => try self.@"error"("expected enum case when created enum value", item),
+            }
+        },
+        else => try self.@"error"("expected struct or enum", namespace),
+    }
+
+    return VOID_TYPE_ID;
 }
 
 pub fn typecheckVarOrFunction(self: *Typechecker, node_id: Parser.NodeId, var_or_fun_id: ?VarOrFuncId) !TypeId {
