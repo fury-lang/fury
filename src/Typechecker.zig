@@ -1462,6 +1462,9 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
         .namespaced_lookup => |namespaced_lookup| {
             node_type = try self.typecheckNamespacedLookup(namespaced_lookup.namespace, namespaced_lookup.item, local_inferences);
         },
+        .match => |match| {
+            node_type = try self.typecheckMatch(match.target, match.match_arms, local_inferences);
+        },
         else => {
             std.debug.print("{any}\n", .{self.compiler.getNode(node_id)});
             unreachable;
@@ -1947,6 +1950,194 @@ pub fn typecheckNamespacedTypeLookup(self: *Typechecker, namespace: Parser.NodeI
     }
 
     return VOID_TYPE_ID;
+}
+
+pub fn typecheckMatch(self: *Typechecker, target: Parser.NodeId, match_arms: std.ArrayList([2]Parser.NodeId), local_inferences: *std.ArrayList(TypeId)) !TypeId {
+    var target_type_id = try self.typecheckNode(target, local_inferences);
+    try self.maybeMoveVariable(target, local_inferences);
+
+    target_type_id = self.compiler.resolveType(target_type_id, local_inferences);
+
+    var inner_type_id: TypeId = target_type_id;
+    switch (self.compiler.getType(target_type_id)) {
+        .pointer => |ptr| {
+            inner_type_id = ptr.target;
+        },
+        else => {},
+    }
+
+    switch (self.compiler.getType(inner_type_id)) {
+        .@"enum" => |e| {
+            const variants = e.variants;
+            var seen_variants = std.ArrayList(bool).init(self.alloc);
+            for (variants.items) |_| {
+                try seen_variants.append(false);
+            }
+
+            arm_label: for (match_arms.items) |arm| {
+                try self.enterScope();
+                switch (self.compiler.getNode(arm[0])) {
+                    .name => {
+                        const var_id = try self.defineVariable(arm[0], target_type_id, false, arm[0]);
+                        const variable_name = self.compiler.getSource(arm[0]);
+
+                        try self.addVariableToScope(variable_name, var_id);
+                        try self.compiler.var_resolution.put(arm[0], var_id);
+
+                        _ = try self.typecheckNode(arm[1], local_inferences);
+                        for (seen_variants.items) |*seen| {
+                            seen.* = true;
+                        }
+                    },
+                    .namespaced_lookup => |namespaced_lookup| {
+                        const namespace = namespaced_lookup.namespace;
+                        const item = namespaced_lookup.item;
+
+                        // For now, let's keep things simple. The namespace has to be the enum name
+                        // and the item has to be the case/arm to match
+
+                        // FIXME/TODO: Confirm that the namespace given is a valid namespace
+                        // for the type being matched
+                        // let namespace_type_id = self.find_type_in_scope(namespace);
+
+                        const namespace_typ_id = inner_type_id;
+
+                        if (namespace_typ_id != inner_type_id) {
+                            try self.@"error"("expected match case to be the same type as matched value", namespace);
+                        } else {
+                            switch (self.compiler.getNode(item)) {
+                                .name => {
+                                    const arm_name = self.compiler.getSource(item);
+
+                                    for (variants.items, 0..) |variant, idx| {
+                                        switch (variant) {
+                                            .simple => |simple| {
+                                                if (std.mem.eql(u8, simple.name, arm_name)) {
+                                                    try self.compiler.call_resolution.put(arm[0], Compiler.CallTarget{
+                                                        .enum_constructor = .{
+                                                            .type_id = inner_type_id,
+                                                            .case_offset = idx,
+                                                        },
+                                                    });
+
+                                                    _ = try self.typecheckNode(arm[1], local_inferences);
+                                                    seen_variants.items[idx] = true;
+                                                    self.exitScope();
+                                                    continue :arm_label;
+                                                }
+                                            },
+                                            else => {},
+                                        }
+                                    }
+                                    try self.@"error"("could not find match enum case", item);
+                                },
+                                .call => |call| {
+                                    const head = call.head;
+                                    const args = call.args;
+
+                                    const arm_name = self.compiler.getSource(head);
+
+                                    for (variants.items, 0..) |variant, idx| {
+                                        switch (variant) {
+                                            .single => |single| {
+                                                const name0 = single.name;
+                                                const param = single.param;
+
+                                                if (std.mem.eql(u8, name0, arm_name)) {
+                                                    try self.compiler.call_resolution.put(arm[0], Compiler.CallTarget{
+                                                        .enum_constructor = .{
+                                                            .type_id = inner_type_id,
+                                                            .case_offset = idx,
+                                                        },
+                                                    });
+
+                                                    if (std.mem.eql(u8, @tagName(self.compiler.getNode(args.items[0])), "name")) {
+                                                        const var_id = try self.defineVariable(args.items[0], param, false, args.items[0]);
+                                                        try self.compiler.var_resolution.put(args.items[0], var_id);
+                                                    }
+
+                                                    _ = try self.typecheckNode(arm[1], local_inferences);
+                                                    seen_variants.items[idx] = true;
+                                                    self.exitScope();
+                                                    continue :arm_label;
+                                                }
+                                            },
+                                            .@"struct" => |s| {
+                                                const variant_name = s.name;
+                                                const params = s.params;
+
+                                                if (std.mem.eql(u8, variant_name, arm_name)) {
+                                                    try self.compiler.call_resolution.put(arm[0], Compiler.CallTarget{
+                                                        .enum_constructor = .{
+                                                            .type_id = inner_type_id,
+                                                            .case_offset = idx,
+                                                        },
+                                                    });
+
+                                                    seen_variants.items[idx] = true;
+                                                    var id: usize = 0;
+                                                    while (id < params.items.len) {
+                                                        const param = params.items[id];
+                                                        const arg = args.items[id];
+
+                                                        if (std.mem.eql(u8, @tagName(self.compiler.getNode(args.items[0])), "name")) {
+                                                            const var_id = try self.defineVariable(arg, param.ty, false, arg);
+                                                            try self.compiler.var_resolution.put(args.items[id], var_id);
+                                                        }
+                                                        id += 1;
+                                                    }
+
+                                                    _ = try self.typecheckNode(arm[1], local_inferences);
+                                                    self.exitScope();
+                                                    continue :arm_label;
+                                                }
+                                            },
+                                            else => {},
+                                        }
+                                    }
+
+                                    try self.@"error"("could not find match enum case", item);
+                                },
+                                else => {
+                                    @panic("not yet supported");
+                                },
+                            }
+                        }
+                    },
+                    else => try self.@"error"("unexpected kind of match case in match", arm[0]),
+                }
+                self.exitScope();
+            }
+
+            for (seen_variants.items, 0..) |seen, variant| {
+                if (!seen) {
+                    switch (variants.items[variant]) {
+                        .simple => |simple| {
+                            const variant_name = simple.name;
+                            const error_msg = try std.fmt.allocPrint(self.alloc, "missing pattern match for {s}", .{variant_name});
+                            try self.@"error"(error_msg, target);
+                        },
+                        .single => |single| {
+                            const variant_name = single.name;
+                            const error_msg = try std.fmt.allocPrint(self.alloc, "missing pattern match for {s}(..)", .{variant_name});
+                            try self.@"error"(error_msg, target);
+                        },
+                        .@"struct" => |s| {
+                            const variant_name = s.name;
+                            const error_msg = try std.fmt.allocPrint(self.alloc, "missing pattern match for {s}(..)", .{variant_name});
+                            try self.@"error"(error_msg, target);
+                        },
+                    }
+                }
+            }
+
+            return VOID_TYPE_ID;
+        },
+        else => {
+            try self.@"error"("currently only enums are supported in matches", target);
+            return VOID_TYPE_ID;
+        },
+    }
 }
 
 pub fn typecheckVarOrFunction(self: *Typechecker, node_id: Parser.NodeId, var_or_fun_id: ?VarOrFuncId) !TypeId {
