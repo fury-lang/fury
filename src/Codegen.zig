@@ -25,7 +25,11 @@ pub fn codegenTypename(self: *Codegen, type_id: Typechecker.TypeId, local_infere
             const id = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
             try output.appendSlice(id);
         },
-        .@"enum" => unreachable,
+        .@"enum" => {
+            try output.appendSlice("struct enum_");
+            const id = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+            try output.appendSlice(id);
+        },
         .pointer => |pt| {
             try self.codegenTypename(pt.target, local_inferences, output);
             try output.appendSlice("*");
@@ -287,7 +291,18 @@ pub fn codegenUserPredecls(self: *Codegen, output: *std.ArrayList(u8)) !void {
                 try output.appendSlice(f_id);
                 try output.appendSlice(";\n");
             },
-            .@"enum" => unreachable,
+            .@"enum" => |e| {
+                const generics_params = e.generic_params;
+                if (!(generics_params.items.len == 0)) {
+                    // Don't codegen generic functions. Instead, only codegen their instantiations
+                    continue;
+                }
+
+                try output.appendSlice("struct enum_");
+                const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                try output.appendSlice(f_id);
+                try output.appendSlice(";\n");
+            },
             .fun => |fun| {
                 const params = fun.params;
                 const ret = fun.ret;
@@ -379,7 +394,141 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                     @panic("internal error: can't find pointer to type");
                 }
             },
-            .@"enum" => unreachable,
+            .@"enum" => |e| {
+                const generic_params = e.generic_params;
+                const cases = e.variants;
+
+                if (!(generic_params.items.len == 0)) {
+                    // Don't codegen generic functions. Instead, only codegen their instantiations
+                    continue;
+                }
+
+                try output.appendSlice("struct enum_");
+                const id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                try output.appendSlice(id);
+                try output.appendSlice("{\n");
+                try output.appendSlice("int arm_id;\n");
+                try output.appendSlice("union {\n");
+                for (cases.items, 0..) |case, _idx| {
+                    switch (case) {
+                        .single => |single| {
+                            var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                            try self.codegenTypename(single.param, &local_inference, output);
+                            try output.append(' ');
+                            try output.appendSlice("case_");
+                            const _id = try std.fmt.allocPrint(self.alloc, "{d}", .{_idx});
+                            try output.appendSlice(_id);
+                            try output.appendSlice(" /*");
+                            try output.appendSlice(single.name);
+                            try output.appendSlice(" */");
+                        },
+                        .@"struct" => |s| {
+                            // FIXME!! This will name collide because of C naming resolution
+                            try output.appendSlice("struct /*");
+                            try output.appendSlice(s.name);
+                            try output.appendSlice(" */ {\n");
+
+                            for (s.params.items, 0..) |arg, arg_idx| {
+                                var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                                try self.codegenTypename(arg.ty, &local_inference, output);
+                                try output.append(' ');
+                                try output.appendSlice("case_");
+                                const _id = try std.fmt.allocPrint(self.alloc, "{}_{} /* ", .{ _idx, arg_idx });
+                                try output.appendSlice(_id);
+                                try output.appendSlice(arg.name);
+                                try output.appendSlice(" */ ;\n");
+                            }
+
+                            try output.appendSlice("};\n");
+                        },
+                        .simple => |_| {
+                            // ignore because it is encoded into the arm_id above
+                        },
+                    }
+                }
+
+                try output.appendSlice("};\n");
+                try output.appendSlice("};\n");
+
+                for (cases.items, 0..) |case, case_offset| {
+                    var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                    try self.codegenTypename(idx, &local_inference, output);
+                    try output.appendSlice("* enum_case_");
+                    const id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                    try output.appendSlice(id_str);
+                    try output.append('_');
+                    const case_off = try std.fmt.allocPrint(self.alloc, "{d}", .{case_offset});
+                    try output.appendSlice(case_off);
+                    try output.appendSlice("(int allocation_id");
+
+                    switch (case) {
+                        .single => |single| {
+                            try output.appendSlice(", ");
+                            var local_inference0 = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                            try self.codegenTypename(single.param, &local_inference0, output);
+                            try output.appendSlice(" arg");
+                        },
+                        .@"struct" => |s| {
+                            for (s.params.items, 0..) |param, param_idx| {
+                                try output.appendSlice(", ");
+                                var local_inference0 = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                                try self.codegenTypename(param.ty, &local_inference0, output);
+                                try output.append(' ');
+                                try output.appendSlice("case_");
+                                const _id = try std.fmt.allocPrint(self.alloc, "{}_{} /* ", .{ case_offset, param_idx });
+                                try output.appendSlice(_id);
+                                try output.appendSlice(param.name);
+                                try output.appendSlice(" */ ;\n");
+                            }
+                        },
+                        .simple => {},
+                    }
+
+                    try output.appendSlice(") {\n");
+                    var local_inference0 = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                    try self.codegenTypename(idx, &local_inference0, output);
+                    try output.appendSlice("* tmp = (");
+                    var local_inference1 = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                    try self.codegenTypename(idx, &local_inference1, output);
+                    try output.appendSlice("*)allocate(allocator, sizeof(struct enum_");
+                    const _id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                    try output.appendSlice(_id);
+                    try output.appendSlice("), allocation_id);\n");
+
+                    try output.appendSlice("tmp->arm_id = \n");
+                    const case_off0 = try std.fmt.allocPrint(self.alloc, "{d}", .{case_offset});
+                    try output.appendSlice(case_off0);
+                    try output.appendSlice(";\n");
+
+                    switch (case) {
+                        .single => |single| {
+                            try output.appendSlice("tmp->case_");
+                            const case_off_str = try std.fmt.allocPrint(self.alloc, "{d}", .{case_offset});
+                            try output.appendSlice(case_off_str);
+                            try output.appendSlice(" = ");
+                            try output.appendSlice("arg; /* ");
+                            try output.appendSlice(single.name);
+                            try output.appendSlice(" */\n");
+                        },
+                        .@"struct" => |s| {
+                            for (s.params.items, 0..) |param, param_idx| {
+                                const tmp = try std.fmt.allocPrint(self.alloc, "tmp->case_{}_{}", .{ case_offset, param_idx });
+                                try output.appendSlice(tmp);
+                                try output.appendSlice(" = ");
+                                const c = try std.fmt.allocPrint(self.alloc, "case_{}_{}; /*", .{ case_offset, param_idx });
+                                try output.appendSlice(c);
+                                try output.appendSlice(param.name);
+                                try output.appendSlice(" */\n");
+                            }
+                        },
+                        .simple => {},
+                    }
+
+                    try output.appendSlice("return tmp;\n");
+
+                    try output.appendSlice("}\n");
+                }
+            },
             .raw_buffer => unreachable,
             .fun => |fun| {
                 const params = fun.params;
@@ -661,6 +810,24 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
 
                     try output.append(')');
                 },
+                .enum_constructor => |ec| {
+                    try output.appendSlice("enum_case_");
+                    const tar_id = try std.fmt.allocPrint(self.alloc, "{}", .{ec.type_id});
+                    try output.appendSlice(tar_id);
+                    try output.append('_');
+                    const offset_id = try std.fmt.allocPrint(self.alloc, "{}", .{ec.type_id});
+                    try output.appendSlice(offset_id);
+                    try output.append('(');
+
+                    try self.codegenAnnotation(node_id, output);
+
+                    for (args.items) |arg| {
+                        try output.appendSlice(", ");
+                        try self.codegenNode(arg, local_inferences, output);
+                    }
+
+                    try output.append(')');
+                },
                 .node_id => {
                     try output.append('(');
                     try self.codegenNode(head, local_inferences, output);
@@ -711,7 +878,110 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                 },
             }
         },
-        .namespaced_lookup => unreachable,
+        .namespaced_lookup => |namespace| {
+            const item = namespace.item;
+            switch (self.compiler.getNode(item)) {
+                .call => |c| {
+                    const head = c.head;
+                    const args = c.args;
+                    const call_target = self.compiler.call_resolution.get(head).?;
+
+                    switch (call_target) {
+                        .function => |fun_id| {
+                            try output.appendSlice("/* ");
+                            try output.appendSlice(self.compiler.getSource(self.compiler.functions.items[fun_id].name));
+                            try output.appendSlice(" */");
+
+                            try output.appendSlice("function_");
+                            const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{fun_id});
+                            try output.appendSlice(f_id);
+                            try output.append('(');
+
+                            try self.codegenAnnotation(node_id, output);
+
+                            for (args.items) |arg| {
+                                try output.appendSlice(", ");
+                                try self.codegenNode(arg, local_inferences, output);
+                            }
+                            try output.appendSlice(")");
+                        },
+                        .enum_constructor => |enum_cons| {
+                            const target = enum_cons.type_id;
+                            const offset = enum_cons.case_offset;
+
+                            try output.appendSlice("enum_case_");
+                            const target_id = try std.fmt.allocPrint(self.alloc, "{d}", .{target});
+                            try output.appendSlice(target_id);
+                            try output.append('_');
+                            const offset_id = try std.fmt.allocPrint(self.alloc, "{d}", .{offset});
+                            try output.appendSlice(offset_id);
+                            try output.append('(');
+
+                            try self.codegenAnnotation(node_id, output);
+
+                            for (args.items) |arg| {
+                                try output.appendSlice(", ");
+                                try self.codegenNode(arg, local_inferences, output);
+                            }
+                            try output.appendSlice(")");
+                        },
+                        else => {
+                            @panic("namedspaced lookup of non-namedspaced value");
+                        },
+                    }
+                },
+                .name => {
+                    const call_target = self.compiler.call_resolution.get(item).?;
+
+                    switch (call_target) {
+                        .function => |fun_id| {
+                            try output.appendSlice("/* ");
+                            try output.appendSlice(self.compiler.getSource(self.compiler.functions.items[fun_id].name));
+                            try output.appendSlice(" */");
+
+                            try output.appendSlice("function_");
+                            const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{fun_id});
+                            try output.appendSlice(f_id);
+                            try output.append('(');
+
+                            try self.codegenAnnotation(node_id, output);
+
+                            try output.append(')');
+                        },
+                        .enum_constructor => |enum_cons| {
+                            const target = enum_cons.type_id;
+                            const offset = enum_cons.case_offset;
+
+                            try output.appendSlice("enum_case_");
+                            const target_id = try std.fmt.allocPrint(self.alloc, "{d}", .{target});
+                            try output.appendSlice(target_id);
+                            try output.append('_');
+                            const offset_id = try std.fmt.allocPrint(self.alloc, "{d}", .{offset});
+                            try output.appendSlice(offset_id);
+                            try output.append('(');
+
+                            try self.codegenAnnotation(node_id, output);
+
+                            try output.append(')');
+                        },
+                        .node_id => |target| {
+                            try output.append('(');
+                            try self.codegenNode(target, local_inferences, output);
+                            try output.append(')');
+
+                            try output.append('(');
+
+                            try self.codegenAnnotation(node_id, output);
+
+                            try output.append(')');
+                        },
+                    }
+                },
+                else => {
+                    @panic("unsupported namespace lookup");
+                },
+            }
+        },
         .named_value => |named_value| {
             // FIXME: this should probably be handled cleanly via typecheck+codegen
             // rather than ignoring the name
@@ -764,7 +1034,164 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
         .@"while" => unreachable,
         .@"for" => unreachable,
         .@"defer" => unreachable,
-        .match => unreachable,
+        .match => |match| {
+            const target = match.target;
+            const match_arms = match.match_arms;
+
+            try output.appendSlice("{\n");
+            const type_id = self.compiler.getNodeType(target);
+            try self.codegenTypename(type_id, local_inferences, output);
+            try output.append(' ');
+            try output.appendSlice("match_var_");
+
+            const target_id = try std.fmt.allocPrint(self.alloc, "{}", .{target});
+            try output.appendSlice(target_id);
+
+            try output.appendSlice(" = ");
+            try self.codegenNode(target, local_inferences, output);
+
+            try output.appendSlice(";\n");
+
+            var first = true;
+            for (match_arms.items) |arm| {
+                const match_arm = arm[0];
+                const match_result = arm[1];
+                if (!first) {
+                    try output.appendSlice("else ");
+                } else {
+                    first = false;
+                }
+
+                switch (self.compiler.getNode(match_arm)) {
+                    .name => {
+                        try output.appendSlice("if (true) {\n");
+
+                        const var_id = self.compiler.var_resolution.get(match_arm).?;
+                        const var_type = self.compiler.getVariable(var_id).ty;
+                        try self.codegenTypename(var_type, local_inferences, output);
+                        try output.appendSlice(" variable_");
+                        const var_id_str = try std.fmt.allocPrint(self.alloc, "{}", .{var_id});
+                        try output.appendSlice(var_id_str);
+
+                        try output.appendSlice(" = ");
+                        try output.appendSlice("match_var_");
+                        const tar_id = try std.fmt.allocPrint(self.alloc, "{}", .{target});
+                        try output.appendSlice(tar_id);
+                        try output.appendSlice(";\n");
+
+                        try self.codegenNode(match_result, local_inferences, output);
+
+                        try output.appendSlice("}\n");
+                    },
+                    .namespaced_lookup => |namespaced_look| {
+                        const item = namespaced_look.item;
+                        switch (self.compiler.getNode(item)) {
+                            .name => {
+                                const resolution = self.compiler.call_resolution.get(match_arm).?;
+
+                                switch (resolution) {
+                                    .enum_constructor => |ec| {
+                                        const case_offset = ec.case_offset;
+                                        try output.appendSlice("if (");
+                                        try output.appendSlice("match_var_");
+                                        const tar_id0 = try std.fmt.allocPrint(self.alloc, "{}", .{target});
+                                        try output.appendSlice(tar_id0);
+                                        try output.appendSlice("->arm_id == ");
+                                        const case_off = try std.fmt.allocPrint(self.alloc, "{}", .{case_offset});
+                                        try output.appendSlice(case_off);
+                                        try output.appendSlice(") {");
+                                        try self.codegenNode(match_result, local_inferences, output);
+                                        try output.appendSlice("}\n");
+                                    },
+                                    else => {
+                                        @panic("target not supported in enum codegen");
+                                    },
+                                }
+                            },
+                            .call => |c| {
+                                const args = c.args;
+                                const resolution = self.compiler.call_resolution.get(match_arm).?;
+
+                                switch (resolution) {
+                                    .enum_constructor => |ec| {
+                                        const case_offset = ec.case_offset;
+                                        try output.appendSlice("if (");
+                                        try output.appendSlice("match_var_");
+                                        const tar_id0 = try std.fmt.allocPrint(self.alloc, "{}", .{target});
+                                        try output.appendSlice(tar_id0);
+                                        try output.appendSlice("->arm_id == ");
+                                        const case_off = try std.fmt.allocPrint(self.alloc, "{}", .{case_offset});
+                                        try output.appendSlice(case_off);
+
+                                        var variable_assignments = std.ArrayList(u8).init(self.alloc);
+
+                                        for (args.items, 0..) |arg, arg_idx| {
+                                            switch (self.compiler.getNode(arg)) {
+                                                .name => {
+                                                    const var_id = self.compiler.var_resolution.get(arg).?;
+                                                    const var_type = self.compiler.getVariable(var_id).ty;
+
+                                                    try self.codegenTypename(var_type, local_inferences, &variable_assignments);
+                                                    try variable_assignments.appendSlice(" variable_");
+                                                    const var_id_str = try std.fmt.allocPrint(self.alloc, "{}", .{var_id});
+                                                    try variable_assignments.appendSlice(var_id_str);
+
+                                                    try variable_assignments.appendSlice(" = ");
+                                                    const match_var = try std.fmt.allocPrint(self.alloc, "match_var_{}", .{target});
+                                                    try variable_assignments.appendSlice(match_var);
+                                                    try variable_assignments.appendSlice("->");
+
+                                                    switch (self.compiler.getType(ec.type_id)) {
+                                                        .@"enum" => |e| {
+                                                            switch (e.variants.items[case_offset]) {
+                                                                .single => {
+                                                                    const case_var = try std.fmt.allocPrint(self.alloc, "case_{}", .{case_offset});
+                                                                    try variable_assignments.appendSlice(case_var);
+                                                                },
+                                                                .@"struct" => {
+                                                                    const case_var = try std.fmt.allocPrint(self.alloc, "case_{}_{}", .{ case_offset, arg_idx });
+                                                                    try variable_assignments.appendSlice(case_var);
+                                                                },
+                                                                else => @panic("unsupported enum variant"),
+                                                            }
+                                                        },
+                                                        else => {
+                                                            @panic("internal error: enum match on non-enum variant ast node");
+                                                        },
+                                                    }
+
+                                                    try variable_assignments.appendSlice(";\n");
+                                                },
+                                                else => {
+                                                    @panic("not yet supported");
+                                                },
+                                            }
+                                        }
+
+                                        try output.appendSlice(") {\n");
+                                        try output.appendSlice(try variable_assignments.toOwnedSlice());
+
+                                        try self.codegenNode(match_result, local_inferences, output);
+                                        try output.appendSlice("}\n");
+                                    },
+                                    else => {
+                                        @panic("target not supported in enum codegen");
+                                    },
+                                }
+                            },
+                            else => {
+                                @panic("node not supported in enum codegen");
+                            },
+                        }
+                    },
+                    else => {
+                        @panic("node not supported in enum codegen");
+                    },
+                }
+            }
+
+            try output.appendSlice("}\n");
+        },
         .block => {
             try self.codegenBlock(node_id, local_inferences, output);
         },
