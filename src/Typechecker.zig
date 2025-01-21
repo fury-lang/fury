@@ -1607,6 +1607,31 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
             self.exitScope();
             node_type = VOID_TYPE_ID;
         },
+        .index => |index| {
+            const target = index.target;
+            const id = index.index;
+            var target_type_id = try self.typecheckNode(target, local_inferences);
+            target_type_id = self.compiler.resolveType(target_type_id, local_inferences);
+            const index_type_id = try self.typecheckNode(id, local_inferences);
+
+            switch (self.compiler.getType(target_type_id)) {
+                .raw_buffer => |inner_type_id| {
+                    if (index_type_id != I64_TYPE_ID) {
+                        try self.@"error"("index with a non-integer type", id);
+                        return node_type;
+                    }
+                    if (!self.unsafeAllowed()) {
+                        try self.@"error"("index into raw buffer requires 'unsafe' block", node_id);
+                        return node_type;
+                    }
+                    node_type = inner_type_id;
+                },
+                else => {
+                    try self.@"error"("index on a non-buffer type", target);
+                    node_type = UNKNOWN_TYPE_ID;
+                },
+            }
+        },
         else => {
             std.debug.print("{any}\n", .{self.compiler.getNode(node_id)});
             unreachable;
@@ -1637,6 +1662,30 @@ pub fn typecheckLvalue(self: *Typechecker, lvalue: Parser.NodeId, local_inferenc
             } else {
                 try self.@"error"("internal error: variable unresolved when checking lvalue", lvalue);
                 return VOID_TYPE_ID;
+            }
+        },
+        .index => |index| {
+            const target = index.target;
+            const id = index.index;
+            var target_type_id = try self.typecheckLvalue(target, local_inferences);
+            target_type_id = self.compiler.resolveType(target_type_id, local_inferences);
+            const index_type_id = try self.typecheckLvalue(id, local_inferences);
+
+            if (index_type_id != I64_TYPE_ID) {
+                try self.@"error"("expected integer type for indexing", id);
+            }
+            if (!self.unsafeAllowed()) {
+                try self.@"error"("index into raw buffer requires 'unsafe' block", lvalue);
+            }
+
+            switch (self.compiler.getType(target_type_id)) {
+                .raw_buffer => |inner_type_id| {
+                    return inner_type_id;
+                },
+                else => {
+                    try self.@"error"("expected buffer when indexing", target);
+                    return VOID_TYPE_ID;
+                },
             }
         },
         .member_access => |member| {
