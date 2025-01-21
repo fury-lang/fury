@@ -38,6 +38,8 @@ pub fn main() !void {
         // std.debug.print("err: {s}\n", .{err.*.message});
     }
 
+    if (c.errors.items.len != 0) return;
+
     var typechecker = try Typechecker.new(alloc, c);
     var c_new = try typechecker.typecheck();
     if (c_new.errors.items.len == 0) c_new.print();

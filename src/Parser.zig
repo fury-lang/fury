@@ -234,7 +234,7 @@ pub const AstNode = union(enum) {
         new_size: NodeId,
     },
     raw_buffer: std.ArrayList(NodeId),
-    unsage_block: NodeId,
+    unsafe_block: NodeId,
     statement: NodeId,
     garbage: Void,
 
@@ -1736,7 +1736,7 @@ pub fn unsafeBlock(self: *Parser) !NodeId {
     const _block = try self.block(true);
     const span_end = self.getSpanEnd(_block);
 
-    return try self.createNode(.{ .unsage_block = _block }, span_start, span_end);
+    return try self.createNode(.{ .unsafe_block = _block }, span_start, span_end);
 }
 
 pub fn rawBuffer(self: *Parser) !NodeId {

@@ -1181,7 +1181,28 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
         .int => node_type = I64_TYPE_ID,
         .float => node_type = F64_TYPE_ID,
         .true, .false => node_type = BOOL_TYPE_ID,
-        .none => unreachable,
+        .none => {
+            // FIXME: check that this is an optional type
+            var type_id = self.compiler.getNodeType(node_id);
+            type_id = self.compiler.resolveType(type_id, local_inferences);
+
+            switch (self.compiler.getType(type_id)) {
+                .pointer => |ptr_ty| {
+                    if (ptr_ty.optional) {
+                        // Success, none can point to an optional pointer
+                        node_type = type_id;
+                    } else {
+                        try self.@"error"("'none' used on required (non-optional) pointer", node_id);
+                    }
+                },
+                else => {
+                    const error_msg = try std.fmt.allocPrint(self.alloc, "'none' requires pointer type, found: {s}", .{try self.compiler.prettyType(type_id)});
+                    try self.@"error"(error_msg, node_id);
+                },
+            }
+
+            node_type = type_id;
+        },
         .string => @panic("strings not yet supported"),
         .c_char => node_type = C_CHAR_TYPE_ID,
         .c_string => node_type = C_STRING_TYPE_ID,
@@ -1464,6 +1485,127 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
         },
         .match => |match| {
             node_type = try self.typecheckMatch(match.target, match.match_arms, local_inferences);
+        },
+        .@"if" => |if_expr| {
+            _ = try self.typecheckNode(if_expr.condition, local_inferences);
+            _ = try self.typecheckNode(if_expr.then_block, local_inferences);
+
+            if (self.compiler.getNodeType(if_expr.condition) != BOOL_TYPE_ID) {
+                try self.@"error"("condition not a boolean expression", if_expr.condition);
+            }
+
+            if (if_expr.else_expression) |else_expr| {
+                _ = try self.typecheckNode(else_expr, local_inferences);
+
+                // FIXME: add type compatibility
+                if (self.compiler.getNodeType(if_expr.then_block) != self.compiler.getNodeType(else_expr)) {
+                    try self.@"error"("return used outside of a function", else_expr);
+                }
+            }
+
+            node_type = self.compiler.getNodeType(if_expr.then_block);
+        },
+        .@"while" => |while_expr| {
+            _ = try self.typecheckNode(while_expr.condition, local_inferences);
+            _ = try self.typecheckNode(while_expr.block, local_inferences);
+
+            if (self.compiler.getNodeType(while_expr.condition) != BOOL_TYPE_ID) {
+                try self.@"error"("condition not a boolean expression", while_expr.condition);
+            }
+
+            node_type = self.compiler.getNodeType(while_expr.block);
+        },
+        .@"for" => |for_expr| {
+            const variable = for_expr.variable;
+            const range = for_expr.range;
+            const block = for_expr.block;
+
+            const range_type = try self.typecheckNode(range, local_inferences);
+
+            // TODO make sure that range type is integer value
+            if (std.mem.eql(u8, @tagName(self.compiler.getType(range_type)), "range")) {
+                try self.enterScope();
+
+                const var_id = try self.defineVariable(variable, I64_TYPE_ID, true, variable);
+                try self.compiler.var_resolution.put(variable, var_id);
+
+                _ = try self.typecheckNode(block, local_inferences);
+
+                self.exitScope();
+            } else {
+                try self.@"error"("expected range in for loop", range);
+            }
+
+            node_type = VOID_TYPE_ID;
+        },
+        .@"break" => {
+            //FIXME: ensure that we're inside a loop
+            node_type = VOID_TYPE_ID;
+        },
+        .@"defer" => |defer_expr| {
+            const pointer_type_id = try self.typecheckNode(defer_expr.pointer, local_inferences);
+            const callback_type_id = try self.typecheckNode(defer_expr.callback, local_inferences);
+
+            switch (self.compiler.getType(callback_type_id)) {
+                .fun => |f| {
+                    if (f.ret != VOID_TYPE_ID) {
+                        try self.@"error"("callback for 'defer' should not return a value", defer_expr.callback);
+                    } else if (f.params.items.len == 1) {
+                        const var_id = f.params.items[0].var_id;
+
+                        if (!self.unifyTypes(self.compiler.getVariable(var_id).ty, pointer_type_id, local_inferences)) {
+                            try self.@"error"("incompatible type in callback for 'defer'", defer_expr.callback);
+                        }
+                    } else if (f.params.items.len == 0) {
+                        // we don't use the pointer, ignore it
+                    } else {
+                        try self.@"error"("incompatible callback for 'defer'", defer_expr.callback);
+                    }
+                },
+                else => {
+                    try self.@"error"("expected function for callback in 'defer'", defer_expr.callback);
+                },
+            }
+
+            node_type = VOID_TYPE_ID;
+        },
+        .resize_buffer => |resize_buffer| {
+            const pointer = resize_buffer.pointer;
+            const new_size = resize_buffer.new_size;
+
+            var pointer_type_id = try self.typecheckNode(pointer, local_inferences);
+            pointer_type_id = self.compiler.resolveType(pointer_type_id, local_inferences);
+
+            var new_size_type_id = try self.typecheckNode(new_size, local_inferences);
+            new_size_type_id = self.compiler.resolveType(new_size_type_id, local_inferences);
+
+            pointer_type_id = self.compiler.resolveType(pointer_type_id, local_inferences);
+
+            if (!self.isBindingMutable(pointer)) {
+                try self.@"error"("variable is not mutable", pointer);
+            }
+
+            if (!std.mem.eql(u8, @tagName(self.compiler.getType(pointer_type_id)), "buffer")) {
+                try self.@"error"("expected raw buffer for resize", pointer);
+            }
+
+            if (!std.mem.eql(u8, @tagName(self.compiler.getType(new_size_type_id)), "i64")) {
+                try self.@"error"("expected integer size for resize", pointer);
+            }
+
+            if (!self.unsafeAllowed()) {
+                try self.@"error"("buffer resize requires 'unsafe' block", node_id);
+            }
+
+            node_type = VOID_TYPE_ID;
+        },
+        .unsafe_block => |bl| {
+            const block_id = bl;
+            try self.enterScope();
+            self.setUnsafe();
+            _ = try self.typecheckNode(block_id, local_inferences);
+            self.exitScope();
+            node_type = VOID_TYPE_ID;
         },
         else => {
             std.debug.print("{any}\n", .{self.compiler.getNode(node_id)});
@@ -2356,7 +2498,19 @@ pub fn endsInReturn(self: *Typechecker, node_id: Parser.NodeId) bool {
             const id = bl.nodes.items[bl.nodes.items.len - 1];
             return self.endsInReturn(id);
         },
-        // TODO
+        .unsafe_block => |bl| {
+            return self.endsInReturn(bl);
+        },
+        .@"if" => |if_expr| {
+            const then_block_ends_in_return = self.endsInReturn(if_expr.then_block);
+
+            if (if_expr.else_expression) |else_expression| {
+                const else_ends_in_return = self.endsInReturn(else_expression);
+                return then_block_ends_in_return and else_ends_in_return;
+            } else {
+                return then_block_ends_in_return;
+            }
+        },
         else => return false,
     }
 }

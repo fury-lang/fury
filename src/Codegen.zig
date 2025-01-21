@@ -1195,7 +1195,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
         .block => {
             try self.codegenBlock(node_id, local_inferences, output);
         },
-        .unsage_block => unreachable,
+        .unsafe_block => unreachable,
         .true => try output.appendSlice("true"),
         .false => try output.appendSlice("false"),
         .fun, .@"struct", .@"enum", .expern_type => {
