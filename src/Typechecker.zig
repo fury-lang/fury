@@ -1632,6 +1632,26 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                 },
             }
         },
+        .range => |range| {
+            const lhs = range.lhs;
+            const rhs = range.rhs;
+
+            var lhs_type = try self.typecheckNode(lhs, local_inferences);
+            lhs_type = self.compiler.resolveType(lhs_type, local_inferences);
+
+            var rhs_type = try self.typecheckNode(rhs, local_inferences);
+            rhs_type = self.compiler.resolveType(rhs_type, local_inferences);
+
+            if (lhs_type != I64_TYPE_ID) {
+                try self.@"error"("expected i64 in range", lhs);
+            }
+
+            if (rhs_type != I64_TYPE_ID) {
+                try self.@"error"("expected i64 in range", rhs);
+            }
+
+            node_type = RANGE_I64_TYPE_ID;
+        },
         else => {
             std.debug.print("{any}\n", .{self.compiler.getNode(node_id)});
             unreachable;

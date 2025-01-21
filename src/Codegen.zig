@@ -1024,16 +1024,125 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                 },
             }
         },
-        .raw_buffer => unreachable,
-        .index => unreachable,
+        .raw_buffer => |raw_buffer| {
+            const type_id = self.compiler.resolveNodeType(node_id, local_inferences);
+            try output.appendSlice("create_buffer_");
+            const type_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+            try output.appendSlice(type_id_str);
+            try output.append('(');
+            try self.codegenAnnotation(node_id, output);
+            try output.appendSlice(", ");
+            const len_str = try std.fmt.allocPrint(self.alloc, "{d}", .{raw_buffer.items.len});
+            try output.appendSlice(len_str);
+            for (raw_buffer.items) |item| {
+                try output.appendSlice(", ");
+                try self.codegenNode(item, local_inferences, output);
+            }
+            try output.append(')');
+        },
+        .index => |index| {
+            try output.appendSlice("(*((");
+            try self.codegenNode(index.target, local_inferences, output);
+            try output.appendSlice(") + (");
+            try self.codegenNode(index.index, local_inferences, output);
+            try output.appendSlice(")))");
+        },
         .statement => |stmt| {
             try self.codegenNode(stmt, local_inferences, output);
             try output.appendSlice(";\n");
         },
-        .@"if" => unreachable,
-        .@"while" => unreachable,
-        .@"for" => unreachable,
-        .@"defer" => unreachable,
+        .@"if" => |if_expr| {
+            const condition = if_expr.condition;
+            const then_block = if_expr.then_block;
+            const else_expression = if_expr.else_expression;
+
+            try output.appendSlice("if (");
+            try self.codegenNode(condition, local_inferences, output);
+            try output.appendSlice(") {\n");
+            try self.codegenNode(then_block, local_inferences, output);
+
+            if (else_expression) |else_expr| {
+                try output.appendSlice("} else {\n");
+                try self.codegenNode(else_expr, local_inferences, output);
+            }
+
+            try output.appendSlice("}\n");
+        },
+        .@"while" => |while_expr| {
+            try output.appendSlice("while (");
+            try self.codegenNode(while_expr.condition, local_inferences, output);
+            try output.appendSlice(") {\n");
+            try self.codegenNode(while_expr.block, local_inferences, output);
+            try output.appendSlice("}\n");
+        },
+        .@"for" => |for_expr| {
+            try output.appendSlice("for (");
+
+            var range_type: Parser.AstNode = undefined;
+            switch (self.compiler.getNode(for_expr.range)) {
+                .range => {
+                    range_type = self.compiler.getNode(for_expr.range);
+                },
+                else => {
+                    @panic("internal error: range not found for 'for'");
+                },
+            }
+
+            const var_id = self.compiler.var_resolution.get(for_expr.variable).?;
+            const var_type = self.compiler.getVariable(var_id).ty;
+
+            try self.codegenTypename(var_type, local_inferences, output);
+
+            try output.appendSlice(" variable_");
+            const var_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{var_id});
+            try output.appendSlice(var_id_str);
+
+            try output.appendSlice(" = ");
+            try self.codegenNode(range_type.range.lhs, local_inferences, output);
+
+            try output.appendSlice("; variable_");
+            try output.appendSlice(var_id_str);
+            try output.appendSlice(" <= ");
+            try self.codegenNode(range_type.range.rhs, local_inferences, output);
+
+            try output.appendSlice("; ++variable_");
+            try output.appendSlice(var_id_str);
+            try output.appendSlice(") {");
+            try self.codegenNode(for_expr.block, local_inferences, output);
+            try output.appendSlice("}\n");
+        },
+        .@"defer" => |defer_expr| {
+            try output.appendSlice("add_resource_cleanup(allocator, ");
+            try self.codegenAnnotation(defer_expr.pointer, output);
+            try output.appendSlice(", ");
+            try self.codegenNode(defer_expr.pointer, local_inferences, output);
+            try output.appendSlice(", (void (*)(long, void *))");
+            try self.codegenNode(defer_expr.callback, local_inferences, output);
+            try output.appendSlice(");\n");
+        },
+        .resize_buffer => |buffer| {
+            try self.codegenNode(buffer.pointer, local_inferences, output);
+            try output.appendSlice(" = resize_page_on_allocator_level(allocator, ");
+            try self.codegenAnnotation(buffer.pointer, output);
+            try output.appendSlice(", ");
+            try self.codegenNode(buffer.pointer, local_inferences, output);
+            try output.appendSlice(", sizeof(");
+
+            const pointer_type_id = self.compiler.resolveNodeType(buffer.pointer, local_inferences);
+
+            switch (self.compiler.getType(pointer_type_id)) {
+                .raw_buffer => |inner_type_id| {
+                    try self.codegenTypename(inner_type_id, local_inferences, output);
+                },
+                else => {
+                    @panic("internal error: resize of non-buffer type");
+                },
+            }
+
+            try output.appendSlice(") * (");
+            try self.codegenNode(buffer.new_size, local_inferences, output);
+            try output.appendSlice("));\n");
+        },
         .match => |match| {
             const target = match.target;
             const match_arms = match.match_arms;
@@ -1195,7 +1304,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
         .block => {
             try self.codegenBlock(node_id, local_inferences, output);
         },
-        .unsafe_block => unreachable,
+        .unsafe_block => |bl| try self.codegenBlock(bl, local_inferences, output),
         .true => try output.appendSlice("true"),
         .false => try output.appendSlice("false"),
         .fun, .@"struct", .@"enum", .expern_type => {
