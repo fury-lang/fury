@@ -173,7 +173,7 @@ pub const AstNode = union(enum) {
         name: NodeId,
         payload: ?std.ArrayList(NodeId),
     },
-    expern_type: struct {
+    extern_type: struct {
         name: NodeId,
     },
 
@@ -634,7 +634,7 @@ pub fn externDefinition(self: *Parser) !NodeId {
         const span_end = self.compiler.span_end.items[_name];
 
         return try self.createNode(
-            .{ .expern_type = .{ .name = _name } },
+            .{ .extern_type = .{ .name = _name } },
             _span_start,
             span_end,
         );

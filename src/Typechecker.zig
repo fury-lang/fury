@@ -1451,7 +1451,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
             }
         },
         // ignore here, since we checked this in an earlier pass
-        .fun, .@"struct", .@"enum", .expern_type => node_type = VOID_TYPE_ID,
+        .fun, .@"struct", .@"enum", .extern_type => node_type = VOID_TYPE_ID,
         .statement => |stmt| {
             _ = try self.typecheckNode(stmt, local_inferences);
             node_type = VOID_TYPE_ID;

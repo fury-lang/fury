@@ -1307,7 +1307,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
         .unsafe_block => |bl| try self.codegenBlock(bl, local_inferences, output),
         .true => try output.appendSlice("true"),
         .false => try output.appendSlice("false"),
-        .fun, .@"struct", .@"enum", .expern_type => {
+        .fun, .@"struct", .@"enum", .extern_type => {
             // ignore this, as we handle it elsewhere
         },
         .type_coercion => unreachable,

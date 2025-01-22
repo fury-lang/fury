@@ -2,6 +2,7 @@ const std = @import("std");
 const Parser = @import("Parser.zig");
 const Errors = @import("Errors.zig");
 const Typechecker = @import("Typechecker.zig");
+const LifetimeChecker = @import("LifetimeChecker.zig");
 
 const Compiler = @This();
 
@@ -11,6 +12,7 @@ span_start: std.ArrayList(usize),
 span_end: std.ArrayList(usize),
 ast_node: std.ArrayList(Parser.AstNode),
 node_types: std.ArrayList(Typechecker.TypeId),
+node_lifetimes: std.ArrayList(LifetimeChecker.AllocationLifetime),
 
 // Blocks, indexed by BlockId
 blocks: std.ArrayList(Parser.Block),
@@ -69,6 +71,7 @@ pub fn new(alloc: std.mem.Allocator) Compiler {
         .span_end = std.ArrayList(usize).init(alloc),
         .ast_node = std.ArrayList(Parser.AstNode).init(alloc),
         .node_types = std.ArrayList(Typechecker.TypeId).init(alloc),
+        .node_lifetimes = std.ArrayList(LifetimeChecker.AllocationLifetime).init(alloc),
         .blocks = std.ArrayList(Parser.Block).init(alloc),
         .source = "",
         .file_offsets = std.ArrayList(File).init(alloc),
@@ -98,7 +101,7 @@ pub fn print(self: *Compiler) void {
     std.debug.print("num nodes: {}\n", .{self.ast_node.items.len});
     for (self.ast_node.items, 0..) |node, node_id| {
         // std.debug.print("{d} {any}\n", .{ node_id, node });
-        std.debug.print("{d} {s} -> {s},    type: {s}\n", .{ node_id, @tagName(node), self.getSource(node_id), self.prettyType(self.node_types.items[node_id]) catch unreachable });
+        std.debug.print("{d} {s} -> {s},    type: {s},    lifetime: {any}\n", .{ node_id, @tagName(node), self.getSource(node_id), self.prettyType(self.node_types.items[node_id]) catch unreachable, self.node_lifetimes.items[node_id] });
     }
 
     std.debug.print("\nBlocks:\n", .{});
@@ -339,6 +342,10 @@ pub fn getVariable(self: *Compiler, var_id: Typechecker.VarId) Typechecker.Varia
     return self.variables.items[var_id];
 }
 
+pub fn getVariableName(self: *Compiler, var_id: Typechecker.VarId) []const u8 {
+    return self.getSource(self.variables.items[var_id].name);
+}
+
 pub fn pushType(self: *Compiler, ty: Typechecker.Type) !Typechecker.TypeId {
     try self.types.append(ty);
     return self.types.items.len - 1;
@@ -369,6 +376,26 @@ pub fn resizeNodeTypes(self: *Compiler, size: usize, type_id: Typechecker.TypeId
             ty.* = type_id;
         }
     }
+}
+
+pub fn resizeNodeLifetimes(self: *Compiler, size: usize) !void {
+    const old_len = self.node_lifetimes.items.len;
+    try self.node_lifetimes.resize(size);
+    for (self.node_lifetimes.items, 0..) |*life, idx| {
+        if (idx >= old_len) {
+            life.* = .{
+                .unknown = Parser.Void.void,
+            };
+        }
+    }
+}
+
+pub fn getNodeLifetime(self: *Compiler, node_id: Parser.NodeId) LifetimeChecker.AllocationLifetime {
+    return self.node_lifetimes.items[node_id];
+}
+
+pub fn setNodeLifetime(self: *Compiler, node_id: Parser.NodeId, allocation_lifetime: LifetimeChecker.AllocationLifetime) void {
+    self.node_lifetimes.items[node_id] = allocation_lifetime;
 }
 
 pub fn findOrCreateType(self: *Compiler, ty: Typechecker.Type) !Typechecker.TypeId {
@@ -433,6 +460,14 @@ pub fn findPointerTo(self: *Compiler, type_id: Typechecker.TypeId) ?Typechecker.
         }
     }
     return null;
+}
+
+pub fn isAllocatorType(self: *Compiler, type_id: Typechecker.TypeId) bool {
+    switch (self.types.items[type_id]) {
+        .pointer => |ptr_ty| return self.isAllocatorType(ptr_ty.target),
+        .@"struct" => |s| return s.is_allocator,
+        else => return false,
+    }
 }
 
 pub fn methodsOnType(self: *Compiler, idx: Typechecker.TypeId) std.ArrayList(Typechecker.FuncId) {
@@ -531,7 +566,7 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
             return try std.fmt.allocPrint(self.alloc, "struct()", .{});
         },
         .fun_local_type_val => |ty| {
-            return try std.fmt.allocPrint(self.alloc, "<local typevar: {d}", .{ty.offset});
+            return try std.fmt.allocPrint(self.alloc, "<local typevar: {d}>", .{ty.offset});
         },
         .type_variable => |id| {
             return try std.fmt.allocPrint(self.alloc, "<{s}>", .{self.getSource(id)});
