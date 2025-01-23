@@ -1310,7 +1310,14 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
         .fun, .@"struct", .@"enum", .extern_type => {
             // ignore this, as we handle it elsewhere
         },
-        .type_coercion => unreachable,
+        .type_coercion => |type_coercion| {
+            const ty = self.compiler.getNodeType(type_coercion.target_type);
+            try self.codegenTypename(ty, local_inferences, output);
+            try output.appendSlice(")");
+            try output.appendSlice("(");
+            try self.codegenNode(type_coercion.source_node, local_inferences, output);
+            try output.appendSlice(")");
+        },
         else => @panic("unsupported node"),
     }
 }

@@ -1652,6 +1652,9 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
 
             node_type = RANGE_I64_TYPE_ID;
         },
+        .type_coercion => |type_coercion| {
+            node_type = self.compiler.getNodeType(type_coercion.target_type);
+        },
         else => {
             std.debug.print("{any}\n", .{self.compiler.getNode(node_id)});
             unreachable;
