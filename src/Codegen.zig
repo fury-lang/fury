@@ -39,8 +39,14 @@ pub fn codegenTypename(self: *Codegen, type_id: Typechecker.TypeId, local_infere
             const id = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
             try output.appendSlice(id);
         },
-        .c_external_type => unreachable,
-        .raw_buffer => unreachable,
+        .c_external_type => |c_ext| {
+            const ty = self.compiler.getSource(c_ext);
+            try output.appendSlice(ty);
+        },
+        .raw_buffer => |inner_ty| {
+            try self.codegenTypename(inner_ty, local_inferences, output);
+            try output.appendSlice("*");
+        },
         else => {
             if (type_id == Typechecker.VOID_TYPE_ID) {
                 try output.appendSlice("void");
@@ -529,7 +535,35 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                     try output.appendSlice("}\n");
                 }
             },
-            .raw_buffer => unreachable,
+            .raw_buffer => |inner_type_id| {
+                switch (self.compiler.getType(inner_type_id)) {
+                    .fun_local_type_val => continue,
+                    else => {},
+                }
+
+                var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                try self.codegenTypename(inner_type_id, &local_inference, output);
+                try output.appendSlice("* create_buffer_");
+                const idx_str = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                try output.appendSlice(idx_str);
+                try output.appendSlice("(int level, int count, ...)\n{\n");
+                var local_inference1 = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                try self.codegenTypename(idx, &local_inference1, output);
+                try output.appendSlice(" output = allocate_resizeable_page_on_allocator_level(allocator, level, sizeof(");
+                var local_inference2 = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                try self.codegenTypename(inner_type_id, &local_inference2, output);
+                try output.appendSlice(") * count);\n");
+                try output.appendSlice("va_list args;\n");
+                try output.appendSlice("va_start(args, count);\n");
+                try output.appendSlice("for (int i = 0; i < count; i++) {\n");
+                try output.appendSlice("*(output + i) = va_arg(args, ");
+                var local_inference3 = std.ArrayList(Typechecker.TypeId).init(self.alloc);
+                try self.codegenTypename(inner_type_id, &local_inference3, output);
+                try output.appendSlice(");\n");
+                try output.appendSlice("}\n");
+                try output.appendSlice("va_end(args);\n");
+                try output.appendSlice("return output;\n}\n");
+            },
             .fun => |fun| {
                 const params = fun.params;
                 const ret = fun.ret;

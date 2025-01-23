@@ -100,8 +100,8 @@ pub fn print(self: *Compiler) void {
     std.debug.print("Nodes:\n", .{});
     std.debug.print("num nodes: {}\n", .{self.ast_node.items.len});
     for (self.ast_node.items, 0..) |node, node_id| {
-        // std.debug.print("{d} {any}\n", .{ node_id, node });
-        std.debug.print("{d} {s} -> {s},    type: {s},    lifetime: {any}\n", .{ node_id, @tagName(node), self.getSource(node_id), self.prettyType(self.node_types.items[node_id]) catch unreachable, self.node_lifetimes.items[node_id] });
+        std.debug.print("{d} {any}\n", .{ node_id, node });
+        // std.debug.print("{d} {s} -> {s},    type: {s},    lifetime: {any}\n", .{ node_id, @tagName(node), self.getSource(node_id), self.prettyType(self.node_types.items[node_id]) catch unreachable, self.node_lifetimes.items[node_id] });
     }
 
     std.debug.print("\nBlocks:\n", .{});
@@ -398,6 +398,17 @@ pub fn setNodeLifetime(self: *Compiler, node_id: Parser.NodeId, allocation_lifet
     self.node_lifetimes.items[node_id] = allocation_lifetime;
 }
 
+pub fn findType(self: *Compiler, ty: Typechecker.Type) Typechecker.TypeId {
+    for (self.types.items, 0..) |*t, idx| {
+        if (std.meta.eql(t.*, ty)) {
+            return idx;
+        }
+    }
+
+    const error_msg = std.fmt.allocPrint(self.alloc, "internal error: can't find {any} as a TypeId", .{ty}) catch unreachable;
+    @panic(error_msg);
+}
+
 pub fn findOrCreateType(self: *Compiler, ty: Typechecker.Type) !Typechecker.TypeId {
     for (self.types.items, 0..) |*t, idx| {
         if (std.meta.eql(t.*, ty)) {
@@ -428,7 +439,10 @@ pub fn resolveType(self: *Compiler, type_id: Typechecker.TypeId, local_inference
 pub fn resolveNodeType(self: *Compiler, node_id: Parser.NodeId, local_inferences: *std.ArrayList(Typechecker.TypeId)) Typechecker.TypeId {
     switch (self.types.items[self.node_types.items[node_id]]) {
         .fun_local_type_val => |ty| return local_inferences.items[ty.offset],
-        .raw_buffer => unreachable,
+        .raw_buffer => |inner_type_id| {
+            const resolved_inner_type_id = self.resolveType(inner_type_id, local_inferences);
+            return self.findType(.{ .raw_buffer = resolved_inner_type_id });
+        },
         else => return self.node_types.items[node_id],
     }
 }

@@ -301,9 +301,43 @@ pub fn unifyTypes(self: *Typechecker, lhs: TypeId, rhs: TypeId, local_inferences
         return lhs_ty.pointer.pointer_type == Parser.PointerType.Unknown or (lhs_ty.pointer.pointer_type == rhs_ty.pointer.pointer_type) or (lhs_ty.pointer.pointer_type == Parser.PointerType.Shared and
             rhs_ty.pointer.pointer_type == Parser.PointerType.Owned) and lhs_ty.pointer.target == rhs_ty.pointer.target and (lhs_ty.pointer.optional == rhs_ty.pointer.optional or lhs_ty.pointer.optional);
     } else if (std.mem.eql(u8, @tagName(lhs_ty), "raw_buffer") and std.mem.eql(u8, @tagName(rhs_ty), "raw_buffer")) {
-        unreachable;
+        const lhs_inner = lhs_ty.raw_buffer;
+        const rhs_inner = rhs_ty.raw_buffer;
+
+        if (self.unifyTypes(lhs_inner, rhs_inner, local_inferences)) {
+            const lhs_resolved = self.compiler.resolveType(lhs_inner, local_inferences);
+            const rhs_resolved = self.compiler.resolveType(rhs_inner, local_inferences);
+
+            // Make sure we have concrete versions of both types for later stages in the compiler
+            _ = self.compiler.findOrCreateType(.{ .raw_buffer = lhs_resolved }) catch unreachable;
+            _ = self.compiler.findOrCreateType(.{ .raw_buffer = rhs_resolved }) catch unreachable;
+
+            return true;
+        } else {
+            return false;
+        }
     } else if (std.mem.eql(u8, @tagName(lhs_ty), "fun") and std.mem.eql(u8, @tagName(rhs_ty), "fun")) {
-        unreachable;
+        const lhs_ret = lhs_ty.fun.ret;
+        const rhs_ret = rhs_ty.fun.ret;
+
+        const lhs_fun_params = lhs_ty.fun.params;
+        const rhs_fun_params = rhs_ty.fun.params;
+
+        if (lhs_fun_params.items.len != rhs_fun_params.items.len) {
+            return false;
+        }
+
+        for (lhs_fun_params.items, 0..) |x, idx| {
+            const y = rhs_fun_params.items[idx];
+            const x_ty = self.compiler.getVariable(x.var_id).ty;
+            const y_ty = self.compiler.getVariable(y.var_id).ty;
+
+            if (!self.unifyTypes(x_ty, y_ty, local_inferences)) {
+                return false;
+            }
+        }
+
+        return self.unifyTypes(lhs_ret, rhs_ret, local_inferences);
     } else if (std.mem.eql(u8, @tagName(lhs_ty), "c_int") and std.mem.eql(u8, @tagName(rhs_ty), "i64")) {
         return true;
     } else if (std.mem.eql(u8, @tagName(lhs_ty), "i64") and std.mem.eql(u8, @tagName(rhs_ty), "c_int")) {
@@ -381,7 +415,11 @@ pub fn typecheckTypename(self: *Typechecker, node_id: Parser.NodeId) !TypeId {
                 .fun = .{ .params = typed_params, .ret = typed_ret },
             });
         },
-        .raw_buffer => unreachable,
+        .raw_buffer_type => |raw_buffer_type| {
+            const inner = raw_buffer_type.inner;
+            const inner_ty = try self.typecheckTypename(inner);
+            return try self.compiler.findOrCreateType(.{ .raw_buffer = inner_ty });
+        },
         else => {
             const error_msg = try std.fmt.allocPrint(self.alloc, "expected type name {s}", .{self.compiler.getSource(node_id)});
             try self.@"error"(error_msg, node_id);
@@ -1569,6 +1607,32 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
 
             node_type = VOID_TYPE_ID;
         },
+        .raw_buffer => |raw_buffer| {
+            const items = raw_buffer.items;
+            var ty = self.compiler.getNodeType(node_id);
+
+            switch (self.compiler.getType(ty)) {
+                .raw_buffer => |raw_ty| ty = raw_ty,
+                else => {},
+            }
+
+            for (items) |item| {
+                const item_type = try self.typecheckNode(item, local_inferences);
+                if (ty == UNKNOWN_TYPE_ID) {
+                    ty = item_type;
+                } else if (ty != item_type) {
+                    const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch in buffer. expected {s}, found: {s}", .{ try self.compiler.prettyType(ty), try self.compiler.prettyType(item_type) });
+                    try self.@"error"(error_msg, node_id);
+                }
+            }
+
+            if (ty == UNKNOWN_TYPE_ID) {
+                ty = try self.compiler.findOrCreateType(.{ .fun_local_type_val = .{ .offset = local_inferences.items.len } });
+                try local_inferences.append(UNKNOWN_TYPE_ID);
+            }
+
+            node_type = try self.compiler.findOrCreateType(.{ .raw_buffer = ty });
+        },
         .resize_buffer => |resize_buffer| {
             const pointer = resize_buffer.pointer;
             const new_size = resize_buffer.new_size;
@@ -1585,7 +1649,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                 try self.@"error"("variable is not mutable", pointer);
             }
 
-            if (!std.mem.eql(u8, @tagName(self.compiler.getType(pointer_type_id)), "buffer")) {
+            if (!std.mem.eql(u8, @tagName(self.compiler.getType(pointer_type_id)), "raw_buffer")) {
                 try self.@"error"("expected raw buffer for resize", pointer);
             }
 
@@ -1692,7 +1756,7 @@ pub fn typecheckLvalue(self: *Typechecker, lvalue: Parser.NodeId, local_inferenc
             const id = index.index;
             var target_type_id = try self.typecheckLvalue(target, local_inferences);
             target_type_id = self.compiler.resolveType(target_type_id, local_inferences);
-            const index_type_id = try self.typecheckLvalue(id, local_inferences);
+            const index_type_id = try self.typecheckNode(id, local_inferences);
 
             if (index_type_id != I64_TYPE_ID) {
                 try self.@"error"("expected integer type for indexing", id);
@@ -1749,6 +1813,7 @@ pub fn typecheckLvalue(self: *Typechecker, lvalue: Parser.NodeId, local_inferenc
             }
         },
         else => {
+            std.debug.print("{any}\n", .{self.compiler.getType(lvalue)});
             try self.@"error"("unsupported lvalue, needs variable or field,", lvalue);
             return VOID_TYPE_ID;
         },
@@ -2009,8 +2074,25 @@ pub fn typecheckNamespacedLookup(self: *Typechecker, namespace: Parser.NodeId, i
 pub fn typecheckNamespacedTypeLookup(self: *Typechecker, namespace: Parser.NodeId, type_id: *TypeId, item: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
     switch (self.compiler.getType(type_id.*)) {
         .@"struct" => {
-            // TODO
-            unreachable;
+            switch (self.compiler.getNode(item)) {
+                .call => |call| {
+                    const head = call.head;
+                    const args = call.args;
+
+                    const call_name = self.compiler.getSource(head);
+                    const methods = self.compiler.methodsOnType(type_id.*);
+                    for (methods.items) |method| {
+                        const method_name = self.compiler.getSource(self.compiler.functions.items[method].name);
+                        if (std.mem.eql(u8, call_name, method_name)) {
+                            return try self.typecheckCallWithFunId(head, method, @constCast(&args), null, local_inferences);
+                        }
+                    }
+                },
+                else => {
+                    try self.@"error"("expected static method call on struct", item);
+                    return VOID_TYPE_ID;
+                },
+            }
         },
         .@"enum" => |e| {
             const cases = e.variants;
@@ -2541,8 +2623,7 @@ pub fn findExpectedReturnType(self: *Typechecker) ?TypeId {
 }
 
 pub fn setExpectedReturnType(self: *Typechecker, expected_type: TypeId) !void {
-    const frame = &self.scope.getLast();
-    @constCast(frame).*.expected_return_type = expected_type;
+    self.scope.items[self.scope.items.len - 1].expected_return_type = expected_type;
 }
 
 pub fn isBindingMutable(self: *Typechecker, node_id: Parser.NodeId) bool {

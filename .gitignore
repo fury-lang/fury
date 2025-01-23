@@ -2,3 +2,4 @@
 zig-out/
 output.c
 output
+.DS_Store
