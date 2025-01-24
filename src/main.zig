@@ -51,11 +51,19 @@ pub fn main() !void {
 
     if (c_new.errors.items.len != 0) return;
 
-    var codegen = try Codegen.new(alloc, c_new);
-    const output = try codegen.codegen();
-
     var lifetime_checker = try LifetimeChecker.new(alloc, c_new);
     c_new = try lifetime_checker.checkLifetimes();
+
+    // if (c_new.errors.items.len == 0) c_new.print();
+
+    for (c_new.errors.items) |*err| {
+        try c_new.printErrors(err);
+    }
+
+    if (c_new.errors.items.len != 0) return;
+
+    var codegen = try Codegen.new(alloc, c_new);
+    const output = try codegen.codegen();
 
     if (c_new.errors.items.len == 0) c_new.print();
 

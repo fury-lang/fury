@@ -9,8 +9,14 @@ const LifetimeChecker = @This();
 alloc: std.mem.Allocator,
 compiler: Compiler,
 current_blocks: std.ArrayList(Parser.BlockId),
-// possible_allocation_sites:
+possible_allocation_sites: std.ArrayList(PossibleAllocationSiteStruct),
 num_lifetime_inferences: std.AutoHashMap(Parser.BlockId, usize),
+
+pub const PossibleAllocationSiteStruct = struct {
+    blocks: std.ArrayList(Parser.BlockId),
+    scope_level: usize,
+    node_id: Parser.NodeId,
+};
 
 pub const AllocationLifetime = union(enum) {
     @"return": Parser.Void,
@@ -28,6 +34,7 @@ pub fn new(alloc: std.mem.Allocator, compiler: Compiler) !LifetimeChecker {
         .alloc = alloc,
         .compiler = compiler,
         .current_blocks = std.ArrayList(Parser.BlockId).init(alloc),
+        .possible_allocation_sites = std.ArrayList(PossibleAllocationSiteStruct).init(alloc),
         .num_lifetime_inferences = std.AutoHashMap(Parser.BlockId, usize).init(alloc),
     };
 }
@@ -74,6 +81,24 @@ pub fn checkBlockLifetime(self: *LifetimeChecker, block_id: Parser.BlockId, scop
     }
 
     _ = self.current_blocks.pop();
+}
+
+pub fn currentBlockMayAllocate(self: *LifetimeChecker, scope_level: usize, node_id: Parser.NodeId) !void {
+    switch (self.compiler.getNodeLifetime(node_id)) {
+        .scope => |scope| {
+            if (scope.level > scope_level) {
+                const error_msg = try std.fmt.allocPrint(self.alloc, "current_block_may_allocate saw an impossible level/scope_level: {} vs {}", .{ scope.level, scope_level });
+                @panic(error_msg);
+            }
+        },
+        else => {},
+    }
+
+    try self.possible_allocation_sites.append(.{
+        .blocks = self.current_blocks,
+        .scope_level = scope_level,
+        .node_id = node_id,
+    });
 }
 
 pub fn incrementLifetimeInferences(self: *LifetimeChecker) !void {
@@ -360,7 +385,8 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
             switch (expected_lifetime) {
                 .@"return", .param, .unknown => {},
                 .scope => {
-                    // TODO check for allocation
+                    // is this right?
+                    try self.currentBlockMayAllocate(scope_level, node_id);
                 },
             }
         },
@@ -375,7 +401,8 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
             switch (expected_lifetime) {
                 .@"return", .param, .unknown => {},
                 .scope => {
-                    // TODO check for allocation
+                    // is this right?
+                    try self.currentBlockMayAllocate(scope_level, node_id);
                 },
             }
         },
@@ -435,7 +462,7 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
                                 }
                             }
 
-                            // TODO check for allocation
+                            try self.currentBlockMayAllocate(scope_level, node_id);
                         } else if (fun_id == 0) {
                             try self.checkNodeLifetime(head, scope_level);
                             for (args.items) |arg| {
@@ -447,7 +474,7 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
                                 try self.checkNodeLifetime(arg, scope_level);
                             }
 
-                            // TODO check for allocation
+                            try self.currentBlockMayAllocate(scope_level, node_id);
                         }
                     },
                     else => {},
@@ -497,7 +524,7 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
                 },
             }
 
-            // TODO check for allocation
+            try self.currentBlockMayAllocate(scope_level, node_id);
         },
         .raw_buffer => |items| {
             try self.expandLifetime(node_id, node_id, .{ .scope = .{ .level = scope_level } });
@@ -507,7 +534,7 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
                 try self.checkNodeLifetime(item, scope_level);
             }
 
-            // TODO check for allocation
+            try self.currentBlockMayAllocate(scope_level, node_id);
         },
         .index => |index| {
             const target = index.target;
@@ -515,7 +542,9 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
             try self.checkNodeLifetime(target, scope_level);
         },
         .@"return" => |return_expr| {
-            // const current_blocks1 = self.current_blocks.items;
+            const current_blocks1 = self.current_blocks;
+
+            try self.compiler.exiting_blocks.put(node_id, current_blocks1);
 
             // check for existing blocks
             if (return_expr) |ret_expr| {
@@ -552,7 +581,7 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
                         },
                         else => {
                             try self.expandLifetimeWithNode(item, node_id);
-                            // TODO check for allocation
+                            try self.currentBlockMayAllocate(scope_level, node_id);
                         },
                     }
                 },
@@ -570,7 +599,9 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
         },
         .fun, .@"struct", .@"enum", .extern_type => {},
         .@"break" => {
-            // TODO check for exiting blocks
+            var list = std.ArrayList(Parser.BlockId).init(self.alloc);
+            try list.append(self.current_blocks.getLast());
+            try self.compiler.exiting_blocks.put(node_id, list);
         },
         .statement => |stmt| {
             try self.checkNodeLifetime(stmt, scope_level);
@@ -612,9 +643,23 @@ pub fn checkLifetimes(self: *LifetimeChecker) !Compiler {
         }
     }
 
-    // TODO Before we leave, go through our possible allocation sites and see
+    // Before we leave, go through our possible allocation sites and see
     // which local scopes allocate for themselves. If they do, mark their
     // blocks so we can properly deallocate these resources
+    for (self.possible_allocation_sites.items) |site| {
+        switch (self.compiler.getNodeLifetime(site.node_id)) {
+            .scope => |scope| {
+                if (site.scope_level > scope.level) {
+                    const idx = site.blocks.items.len - site.scope_level - scope.level;
+                    if (idx >= 0) {
+                        const block_id = site.blocks.items[idx];
+                        self.compiler.blocks.items[block_id].may_locally_allocate = scope.level;
+                    }
+                }
+            },
+            else => {},
+        }
+    }
 
     return self.compiler;
 }

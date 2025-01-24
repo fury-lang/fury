@@ -639,11 +639,18 @@ pub fn codegenFunSignature(self: *Codegen, fun_id: Typechecker.FuncId, params: *
 }
 
 pub fn codegenAnnotation(self: *Codegen, node_id: Parser.NodeId, output: *std.ArrayList(u8)) !void {
-    _ = self;
-    _ = node_id;
-    // TODO check lifetime scope
-
-    try output.appendSlice("allocation_id + 1");
+    switch (self.compiler.getNodeLifetime(node_id)) {
+        .@"return" => try output.appendSlice("allocation_id"),
+        .param => |param| {
+            const free_str = try std.fmt.allocPrint(self.alloc, "variable_{}->__allocation_id__", .{param.var_id});
+            try output.appendSlice(free_str);
+        },
+        .scope => |scope| {
+            const free_str = try std.fmt.allocPrint(self.alloc, "allocation_id + {}", .{scope.level});
+            try output.appendSlice(free_str);
+        },
+        .unknown => try output.appendSlice("/* UNKNOWN, */ "),
+    }
 }
 
 pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *std.ArrayList(Typechecker.TypeId), output: *std.ArrayList(u8)) anyerror!void {
@@ -1021,7 +1028,19 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
             // rather than ignoring the name
             try self.codegenNode(named_value.value, local_inferences, output);
         },
-        .@"break" => unreachable,
+        .@"break" => {
+            if (self.compiler.exiting_blocks.get(node_id)) |exiting_blocks| {
+                var i: i32 = @intCast(exiting_blocks.items.len - 1);
+                while (i >= 0) : (i -= 1) {
+                    const exiting_block = exiting_blocks.items[@intCast(i)];
+                    if (self.compiler.blocks.items[exiting_block].may_locally_allocate) |scope_level| {
+                        const free_str = try std.fmt.allocPrint(self.alloc, "free_allocator_level(allocator, allocation_id + {});\n", .{scope_level});
+                        try output.appendSlice(free_str);
+                    }
+                }
+            }
+            try output.appendSlice("break;\n");
+        },
         .member_access => |member_access| {
             try self.codegenNode(member_access.target, local_inferences, output);
             try output.appendSlice("->");
@@ -1369,7 +1388,16 @@ pub fn codegenBlock(self: *Codegen, block: Parser.NodeId, local_inferences: *std
                             try output.appendSlice(";\n");
                         }
 
-                        // TODO check for freeing allocator level
+                        if (self.compiler.exiting_blocks.get(node_id)) |exiting_blocks| {
+                            var i: i32 = @intCast(exiting_blocks.items.len - 1);
+                            while (i >= 0) : (i -= 1) {
+                                const exiting_block = exiting_blocks.items[@intCast(i)];
+                                if (self.compiler.blocks.items[exiting_block].may_locally_allocate) |scope_level| {
+                                    const free_str = try std.fmt.allocPrint(self.alloc, "free_allocator_level(allocator, allocation_id + {});\n", .{scope_level});
+                                    try output.appendSlice(free_str);
+                                }
+                            }
+                        }
 
                         if (return_expr) |_| {
                             try output.appendSlice("return return_expr;\n");
@@ -1384,7 +1412,11 @@ pub fn codegenBlock(self: *Codegen, block: Parser.NodeId, local_inferences: *std
                         try output.appendSlice(";\n");
                     },
                 }
-                // TODO check for freeing allocator level
+
+                if (self.compiler.blocks.items[block_id].may_locally_allocate) |scope_level| {
+                    const free_str = try std.fmt.allocPrint(self.alloc, "free_allocator_level(allocator, allocation_id + {});\n", .{scope_level});
+                    try output.appendSlice(free_str);
+                }
             }
         },
         else => @panic("codegen of a block that isn't a block"),

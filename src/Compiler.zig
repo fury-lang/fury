@@ -31,6 +31,9 @@ types: std.ArrayList(Typechecker.Type),
 // indexed by ModuleId
 modules: std.ArrayList(Typechecker.Module),
 
+// Memory reclamation
+exiting_blocks: std.AutoHashMap(Parser.NodeId, std.ArrayList(Parser.BlockId)),
+
 // Methods on types
 methods_on_type: std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.FuncId)),
 virtual_methods_on_type: std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.FuncId)),
@@ -79,6 +82,7 @@ pub fn new(alloc: std.mem.Allocator) Compiler {
         .functions = std.ArrayList(Typechecker.Function).init(alloc),
         .types = std.ArrayList(Typechecker.Type).init(alloc),
         .modules = std.ArrayList(Typechecker.Module).init(alloc),
+        .exiting_blocks = std.AutoHashMap(Parser.NodeId, std.ArrayList(Parser.BlockId)).init(alloc),
         .errors = std.ArrayList(Errors.SourceError).init(alloc),
         .call_resolution = std.AutoHashMap(Parser.NodeId, CallTarget).init(alloc),
         .var_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.VarId).init(alloc),
@@ -88,6 +92,15 @@ pub fn new(alloc: std.mem.Allocator) Compiler {
         .methods_on_type = std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.FuncId)).init(alloc),
         .virtual_methods_on_type = std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.FuncId)).init(alloc),
     };
+}
+
+pub fn printLifetime(self: *Compiler, node_id: usize) void {
+    switch (self.node_lifetimes.items[node_id]) {
+        .@"return" => std.debug.print("return", .{}),
+        .unknown => std.debug.print("unknown", .{}),
+        .scope => |scope| std.debug.print("Scope [ level: {} ]", .{scope.level}),
+        .param => |param| std.debug.print("Param [ var_id: {} ]", .{param.var_id}),
+    }
 }
 
 pub fn print(self: *Compiler) void {
@@ -100,7 +113,9 @@ pub fn print(self: *Compiler) void {
     std.debug.print("Nodes:\n", .{});
     std.debug.print("num nodes: {}\n", .{self.ast_node.items.len});
     for (self.ast_node.items, 0..) |node, node_id| {
-        std.debug.print("{d} {any}\n", .{ node_id, node });
+        std.debug.print("{d} {any}, {s},    (lifetime: ", .{ node_id, node, self.prettyType(self.node_types.items[node_id]) catch unreachable });
+        self.printLifetime(node_id);
+        std.debug.print(")\n", .{});
         // std.debug.print("{d} {s} -> {s},    type: {s},    lifetime: {any}\n", .{ node_id, @tagName(node), self.getSource(node_id), self.prettyType(self.node_types.items[node_id]) catch unreachable, self.node_lifetimes.items[node_id] });
     }
 
