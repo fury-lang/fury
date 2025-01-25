@@ -597,6 +597,148 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
     }
 }
 
+pub fn codegenVtableDecl(self: *Codegen, type_id: usize, virtual_methods: *std.ArrayList(Typechecker.FuncId), output: *std.ArrayList(u8)) !void {
+    try output.appendSlice("struct vtable_");
+    const id = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+    try output.appendSlice(id);
+    try output.appendSlice("{\n");
+
+    for (virtual_methods.items) |method| {
+        const fun = self.compiler.functions.items[method];
+        try self.codegenTypename(fun.return_type, @constCast(&fun.inference_vars), output);
+        try output.appendSlice(" (*");
+        try output.appendSlice(self.compiler.getSource(fun.name));
+        try output.appendSlice(")(");
+        try output.appendSlice("long allocation_id");
+
+        for (fun.params.items) |param| {
+            try output.appendSlice(", ");
+
+            const variable_ty = self.compiler.getVariable(param.var_id).ty;
+            try self.codegenTypename(variable_ty, @constCast(&fun.inference_vars), output);
+            try output.append(' ');
+            try output.appendSlice("variable_");
+            const param_id = try std.fmt.allocPrint(self.alloc, "{d}", .{param.var_id});
+            try output.appendSlice(param_id);
+        }
+        try output.appendSlice(");\n");
+    }
+
+    const type_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+    try output.appendSlice("};\n");
+    try output.appendSlice("typedef struct vtable_");
+    try output.appendSlice(type_id_str);
+    try output.appendSlice(" vtable_");
+    try output.appendSlice(type_id_str);
+    try output.appendSlice(";\n");
+}
+
+pub fn codegenVirtFunctionTypedefs(self: *Codegen, virtual_methods: *std.ArrayList(Typechecker.FuncId), output: *std.ArrayList(u8)) !void {
+    for (virtual_methods.items) |method| {
+        const fun = self.compiler.functions.items[method];
+        try output.appendSlice("typedef ");
+        try self.codegenTypename(fun.return_type, @constCast(&fun.inference_vars), output);
+        try output.appendSlice(" (*virt_fun_ty_");
+        const idx_str = try std.fmt.allocPrint(self.alloc, "{d}", .{method});
+        try output.appendSlice(idx_str);
+        try output.appendSlice(")(");
+        try output.appendSlice("long allocation_id");
+
+        for (fun.params.items) |param| {
+            try output.appendSlice(", ");
+
+            const variable_ty = self.compiler.getVariable(param.var_id).ty;
+            try self.codegenTypename(variable_ty, @constCast(&fun.inference_vars), output);
+            try output.append(' ');
+            try output.appendSlice("variable_");
+            const param_id = try std.fmt.allocPrint(self.alloc, "{d}", .{param.var_id});
+            try output.appendSlice(param_id);
+        }
+        try output.appendSlice(");\n");
+    }
+}
+
+pub fn codegenVtableInstantiation(self: *Codegen, base_classes: *std.ArrayList(Typechecker.TypeId), type_id: usize, methods: *std.ArrayList(Typechecker.FuncId), output: *std.ArrayList(u8)) !void {
+    var i: i32 = @intCast(base_classes.items.len - 1);
+    bases: while (i >= 0) : (i -= 1) {
+        const base_class = base_classes.items[@intCast(i)];
+        // TODO satisfy virtual methods
+        const vtable_fully_satisfied = false;
+
+        if (!vtable_fully_satisfied) {
+            continue :bases;
+        }
+
+        const virtual_methods = self.compiler.virtualMethodsOnType(base_class);
+        _ = virtual_methods;
+        // TODO convert to hashmap (method_name -> method_id)
+
+        const base_id = try std.fmt.allocPrint(self.alloc, "{d}", .{base_class});
+        const type_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+        try output.appendSlice("static const vtable_");
+        try output.appendSlice(base_id);
+        try output.appendSlice(" vtable_struct_");
+        try output.appendSlice(type_id_str);
+        try output.appendSlice(" = {\n");
+
+        for (methods.items) |method| {
+            const fun = self.compiler.functions.items[method];
+            const fun_name = self.compiler.getSource(fun.name);
+
+            const virt_fun_id: Typechecker.FuncId = undefined;
+            // get from virtual_methods hashmap
+
+            const method_id = try std.fmt.allocPrint(self.alloc, "{d}", .{method});
+            const virt_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{virt_fun_id});
+            try output.appendSlice("    .");
+            try output.appendSlice(fun_name);
+            try output.appendSlice(" = (virt_fun_ty_");
+            try output.appendSlice(virt_id_str);
+            try output.appendSlice(")function_");
+            try output.appendSlice(method_id);
+            try output.appendSlice(",\n");
+        }
+
+        try output.appendSlice("};");
+    }
+}
+
+pub fn codegenVtableMethodPredecls(self: *Codegen, base_classes: *std.ArrayList(Typechecker.TypeId), methods: *std.ArrayList(Typechecker.FuncId), output: *std.ArrayList(u8)) !void {
+    var base_virtual_method_names = std.StringHashMap(usize).init(self.alloc);
+    for (base_classes.items) |ty| {
+        const base_virtual_method = self.compiler.virtualMethodsOnType(ty);
+        for (base_virtual_method.items) |id| {
+            const node_id = self.compiler.functions.items[id].name;
+            const name = self.compiler.getSource(node_id);
+            try base_virtual_method_names.put(name, id);
+        }
+    }
+
+    for (methods.items) |method| {
+        const fun = self.compiler.functions.items[method];
+        const method_name = self.compiler.getSource(fun.name);
+        if (base_virtual_method_names.contains(method_name)) {
+            const method_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{method});
+            try output.appendSlice("void /* ");
+            try output.appendSlice(method_name);
+            try output.appendSlice(" */ function_");
+            try output.appendSlice(method_id_str);
+            try output.appendSlice("(long allocation_id");
+
+            for (fun.params.items) |param| {
+                try output.appendSlice(", ");
+                const variable_ty = self.compiler.getVariable(param.var_id).ty;
+                try self.codegenTypename(variable_ty, @constCast(fun.inference_vars), output);
+                try output.append(' ');
+                try output.appendSlice("variable_");
+                const param_id = try std.fmt.allocPrint(self.alloc, "{d}", .{param.var_id});
+                try output.appendSlice(param_id);
+            }
+            try output.appendSlice(");");
+        }
+    }
+}
+
 pub fn codegenFunSignature(self: *Codegen, fun_id: Typechecker.FuncId, params: *std.ArrayList(Typechecker.Param), return_type: Typechecker.TypeId, output: *std.ArrayList(u8), is_extern_c: bool) !void {
     try self.codegenTypename(return_type, &self.compiler.functions.items[fun_id].inference_vars, output);
     try output.append(' ');
