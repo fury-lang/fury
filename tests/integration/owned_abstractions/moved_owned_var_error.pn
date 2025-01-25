@@ -4,7 +4,7 @@ struct Foo {
     z: i64
 }
 
-let foo = new Foo(z: 100)
+let foo = new owned Foo(z: 100)
 
 let y = foo
 

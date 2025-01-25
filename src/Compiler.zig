@@ -113,7 +113,9 @@ pub fn print(self: *Compiler) void {
     std.debug.print("Nodes:\n", .{});
     std.debug.print("num nodes: {}\n", .{self.ast_node.items.len});
     for (self.ast_node.items, 0..) |node, node_id| {
-        std.debug.print("{d} {any}, {s},    (lifetime: ", .{ node_id, node, self.prettyType(self.node_types.items[node_id]) catch unreachable });
+        _ = node;
+        // std.debug.print("{d} {any},    (lifetime: ", .{ node_id, node });
+        std.debug.print("{}: {s}: ", .{ node_id, self.getSource(node_id) });
         self.printLifetime(node_id);
         std.debug.print(")\n", .{});
         // std.debug.print("{d} {s} -> {s},    type: {s},    lifetime: {any}\n", .{ node_id, @tagName(node), self.getSource(node_id), self.prettyType(self.node_types.items[node_id]) catch unreachable, self.node_lifetimes.items[node_id] });
@@ -500,7 +502,11 @@ pub fn isAllocatorType(self: *Compiler, type_id: Typechecker.TypeId) bool {
 }
 
 pub fn methodsOnType(self: *Compiler, idx: Typechecker.TypeId) std.ArrayList(Typechecker.FuncId) {
-    return self.methods_on_type.get(idx).?;
+    if (self.methods_on_type.get(idx)) |list| {
+        return list;
+    } else {
+        return std.ArrayList(Typechecker.FuncId).init(self.alloc);
+    }
 }
 
 pub fn virtualMethodsOnType(self: *Compiler, idx: Typechecker.TypeId) std.ArrayList(Typechecker.FuncId) {

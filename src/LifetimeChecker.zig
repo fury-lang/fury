@@ -62,10 +62,9 @@ pub fn checkBlockLifetime(self: *LifetimeChecker, block_id: Parser.BlockId, scop
 
         var idx: i32 = @intCast(block.nodes.items.len);
         idx -= 1;
-        while (idx >= 0) {
+        while (idx >= 0) : (idx -= 1) {
             const node_id = block.nodes.items[@intCast(idx)];
             try self.checkNodeLifetime(node_id, scope_level);
-            idx -= 1;
         }
 
         var num_lifetime_inferences_after: usize = 0;
@@ -105,6 +104,8 @@ pub fn incrementLifetimeInferences(self: *LifetimeChecker) !void {
     const current_block_id = self.current_blocks.getLast();
     if (self.num_lifetime_inferences.get(current_block_id)) |entry| {
         try self.num_lifetime_inferences.put(current_block_id, entry + 1);
+    } else {
+        try self.num_lifetime_inferences.put(current_block_id, 1);
     }
 }
 
@@ -424,14 +425,14 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
                             try self.checkNodeLifetime(head, scope_level);
 
                             const params = self.compiler.functions.items[fun_id].params;
-                            if (self.compiler.functions.items[fun_id].body) |_| {
+                            if (self.compiler.functions.items[fun_id].body == null) {
                                 // External calls handle their own lifetimes?
                                 return;
                             }
 
                             for (params.items, 0..) |param, idx| {
+                                if (idx >= args.items.len) break;
                                 const arg = args.items[idx];
-
                                 const param_node_id = self.compiler.getVariable(param.var_id).where_defined;
 
                                 const expected_lifetime = self.compiler.getNodeLifetime(param_node_id);
@@ -446,6 +447,7 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
                                         // figure out which arg corresponds to this var_id
                                         const var_id = p.var_id;
                                         for (params.items, 0..) |param2, _idx| {
+                                            if (_idx >= args.items.len) break;
                                             const arg2 = args.items[_idx];
                                             if (param2.var_id == var_id and arg != arg2) {
                                                 try self.expandLifetimeWithNode(arg, arg2);
@@ -545,8 +547,6 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
             const current_blocks1 = self.current_blocks;
 
             try self.compiler.exiting_blocks.put(node_id, current_blocks1);
-
-            // check for existing blocks
             if (return_expr) |ret_expr| {
                 try self.expandLifetime(ret_expr, ret_expr, .{ .@"return" = Parser.Void.void });
                 try self.checkNodeLifetime(ret_expr, scope_level);
@@ -594,7 +594,7 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
 
             try self.expandLifetimeWithNode(target, node_id);
             for (match_arms.items) |match0| {
-                try self.checkBlockLifetime(match0[1], scope_level);
+                try self.checkNodeLifetime(match0[1], scope_level);
             }
         },
         .fun, .@"struct", .@"enum", .extern_type => {},
@@ -624,11 +624,32 @@ pub fn checkLifetimes(self: *LifetimeChecker) !Compiler {
 
     // Set up param lifetimes, skipping over our built-in print
     for (self.compiler.functions.items, 0..) |_, fun_id| {
+        if (fun_id == 0) continue;
         const fun = self.compiler.functions.items[fun_id];
-        for (fun.params.items) |param| {
+        param_label: for (fun.params.items) |param| {
             const param_node_id = self.compiler.getVariable(param.var_id).where_defined;
 
-            // TODO lifetime annotations
+            for (fun.lifetime_annotations.items) |lifetime_annotation| {
+                switch (lifetime_annotation) {
+                    .equality => |equality| {
+                        if (std.mem.eql(u8, @tagName(equality.left), "return") and std.mem.eql(u8, @tagName(equality.right), "variable")) {
+                            if (equality.right.variable == param.var_id) {
+                                self.compiler.setNodeLifetime(param_node_id, .{ .@"return" = Parser.Void.void });
+                                continue :param_label;
+                            }
+                        } else if (std.mem.eql(u8, @tagName(equality.left), "variable") and std.mem.eql(u8, @tagName(equality.right), "return")) {
+                            if (equality.left.variable == param.var_id) {
+                                self.compiler.setNodeLifetime(param_node_id, .{ .@"return" = Parser.Void.void });
+                                continue :param_label;
+                            }
+                        } else if (std.mem.eql(u8, @tagName(equality.left), "variable") and std.mem.eql(u8, @tagName(equality.right), "variable")) {
+                            if (equality.left.variable == param.var_id) {
+                                self.compiler.setNodeLifetime(param_node_id, .{ .param = .{ .var_id = equality.right.variable } });
+                            }
+                        }
+                    },
+                }
+            }
 
             self.compiler.setNodeLifetime(param_node_id, .{
                 .param = .{ .var_id = param.var_id },
@@ -638,6 +659,7 @@ pub fn checkLifetimes(self: *LifetimeChecker) !Compiler {
 
     // Check function bodies, skipping over our built-in print
     for (self.compiler.functions.items, 0..) |_, fun_id| {
+        if (fun_id == 0) continue;
         if (self.compiler.functions.items[fun_id].body) |body| {
             try self.checkNodeLifetime(body, 0);
         }

@@ -65,7 +65,8 @@ pub fn codegenTypename(self: *Codegen, type_id: Typechecker.TypeId, local_infere
             } else if (type_id == Typechecker.C_CHAR_TYPE_ID) {
                 try output.appendSlice("char");
             } else if (type_id == Typechecker.BOOL_TYPE_ID) {
-                try output.appendSlice("bool");
+                // check why we got error without the extra space
+                try output.appendSlice("bool ");
             } else if (type_id == Typechecker.UNKNOWN_TYPE_ID) {
                 @panic("(unknown) type should be resolved before codegen");
             } else {

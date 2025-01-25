@@ -591,7 +591,7 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                     arg_type = try self.typecheckNode(arg, local_inferences);
                 }
 
-                // TODO check for variables moves
+                try self.maybeMoveVariable(arg, local_inferences);
                 const param = params.items[idx];
                 const variable = self.compiler.getVariable(param.var_id);
 
@@ -659,7 +659,6 @@ pub fn typecheckCall(self: *Typechecker, node_id: Parser.NodeId, head: Parser.No
 }
 
 pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params: ?Parser.NodeId, params: Parser.NodeId, lifetime_annotations: *std.ArrayList(Parser.NodeId), return_ty: ?Parser.NodeId, initial_node_id: ?Parser.NodeId, block: ?Parser.NodeId, is_extern: bool) !FuncId {
-    _ = lifetime_annotations;
     var fun_params = std.ArrayList(Param).init(self.alloc);
     var fun_type_params = std.ArrayList(TypeParam).init(self.alloc);
     _ = &fun_type_params;
@@ -685,7 +684,7 @@ pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params:
 
                         const tt = try self.typecheckTypename(ty);
 
-                        const var_id = try self.defineVariable(_name, tt, is_mutable, name);
+                        const var_id = try self.defineVariable(_name, tt, is_mutable, _name);
                         self.compiler.setNodeType(_name, tt);
                         try fun_params.append(Param.new(_param_name, var_id));
                     },
@@ -696,9 +695,47 @@ pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params:
         else => try self.@"error"("expected function parameters", params),
     }
 
-    const checked_lifetime_annotations = std.ArrayList(LifetimeAnnotation).init(self.alloc);
+    var checked_lifetime_annotations = std.ArrayList(LifetimeAnnotation).init(self.alloc);
 
-    // TODO typecheck lifetime annotations
+    for (lifetime_annotations.items) |lifetime_annotation| {
+        switch (self.compiler.getNode(lifetime_annotation)) {
+            .binary_op => |bin_op| {
+                var lhs: Lifetime = undefined;
+                var rhs: Lifetime = undefined;
+
+                switch (self.compiler.getNode(bin_op.left)) {
+                    .name => {
+                        if (self.findVariableInScope(bin_op.left)) |var_id| {
+                            lhs = .{ .variable = var_id };
+                        } else {
+                            try self.@"error"("couldn't find parameter for lifetime", bin_op.left);
+                            continue;
+                        }
+                    },
+                    .return_lifetime => lhs = .{ .@"return" = Void.void },
+                    else => @panic("internal error: non-variable and non-return lifetime"),
+                }
+
+                switch (self.compiler.getNode(bin_op.right)) {
+                    .name => {
+                        if (self.findVariableInScope(bin_op.right)) |var_id| {
+                            rhs = .{ .variable = var_id };
+                        } else {
+                            try self.@"error"("couldn't find parameter for lifetime", bin_op.right);
+                            continue;
+                        }
+                    },
+                    .return_lifetime => lhs = .{ .@"return" = Void.void },
+                    else => @panic("internal error: non-variable and non-return lifetime"),
+                }
+
+                try checked_lifetime_annotations.append(.{ .equality = .{ .left = lhs, .right = rhs } });
+            },
+            else => {
+                @panic("internal error: lifetime anotation is not a binary op");
+            },
+        }
+    }
 
     var _return_ty = VOID_TYPE_ID;
     if (return_ty) |ret_ty| {
@@ -1253,7 +1290,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
             var initializer_type = try self.typecheckNode(initializer, local_inferences);
             initializer_type = self.compiler.resolveType(initializer_type, local_inferences);
 
-            // TODO check for variable moves
+            try self.maybeMoveVariable(initializer, local_inferences);
 
             var var_id: VarId = undefined;
             if (ty) |_ty| {
@@ -1364,6 +1401,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                 .assignment, .add_assignment, .subtract_assignment, .multiply_assignment, .divide_assignment => {
                     const lhs_ty = try self.typecheckLvalue(lhs, local_inferences);
                     const rhs_ty = try self.typecheckNode(rhs, local_inferences);
+                    try self.maybeMoveVariable(rhs, local_inferences);
 
                     if (!self.unifyTypes(lhs_ty, rhs_ty, local_inferences)) {
                         const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during operation. expected: {s}, found: {s}", .{ try self.compiler.prettyType(lhs_ty), try self.compiler.prettyType(rhs_ty) });
@@ -1835,7 +1873,7 @@ pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {
             }
 
             for (fields.items) |field| {
-                if (field.member_access == Parser.MemberAccess.Private and !self.typeIsOwned(field.ty)) {
+                if (field.member_access == Parser.MemberAccess.Public and !self.typeIsOwned(field.ty)) {
                     // TODO add a note
                     return false;
                 }
@@ -2436,11 +2474,369 @@ pub fn typecheckMatch(self: *Typechecker, target: Parser.NodeId, match_arms: std
     }
 }
 
+pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *std.AutoHashMap(TypeId, TypeId)) anyerror!TypeId {
+    const fun = self.compiler.functions.items[fun_id];
+
+    const _name = fun.name;
+    const params = fun.params;
+    const new_params = try params.clone();
+    const lifetime_annotations = try fun.lifetime_annotations.clone();
+    const type_params = std.ArrayList(TypeParam).init(self.alloc);
+    const inference_vars = std.ArrayList(TypeId).init(self.alloc);
+    const return_node = fun.return_node;
+    var return_type = fun.return_type;
+    var initial_node_id = fun.initial_node_id;
+    var _body = fun.body;
+    const is_extern = fun.is_extern;
+
+    for (new_params.items) |new_param| {
+        var new_var = self.compiler.getVariable(new_param.var_id);
+        new_var.ty = try self.instantiateGenericType(new_var.ty, replacements);
+        try self.compiler.variables.append(new_var);
+        new_param.var_id = self.compiler.variables.items.len - 1;
+    }
+
+    for (lifetime_annotations.items) |lifetime_annotation| {
+        switch (lifetime_annotation) {
+            .equality => |equality| {
+                switch (equality.lhs) {
+                    .variable => |*v_id| {
+                        for (params.items, 0..) |param, idx| {
+                            const new_param = new_params.items[idx];
+                            if (v_id == param.var_id) {
+                                v_id.* = new_param.var_id;
+                            }
+                        }
+                    },
+                    else => {},
+                }
+                switch (equality.rhs) {
+                    .variable => |v_id| {
+                        for (params.items, 0..) |param, idx| {
+                            const new_param = new_params.items[idx];
+                            if (v_id == param.var_id) {
+                                v_id.* = new_param.var_id;
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            },
+        }
+    }
+
+    return_type = try self.instantiateGenericType(return_type, replacements);
+
+    if (initial_node_id) |inner_initial_node_id| {
+        if (_body) |inner_body| {
+            const offset = self.compiler.numAstNodes() - inner_initial_node_id;
+
+            try self.compiler.resizeNodeTypes(self.compiler.numAstNodes() + (inner_body - inner_initial_node_id + 1), UNKNOWN_TYPE_ID);
+
+            for (inner_initial_node_id..inner_body + 1) |raw_node_id| {
+                var ast_node = self.compiler.getNode(raw_node_id);
+                switch (ast_node) {
+                    .binary_op => |*bin_op| {
+                        bin_op.*.left = bin_op.*.left + offset;
+                        bin_op.*.op = bin_op.*.op + offset;
+                        bin_op.*.right = bin_op.*.right + offset;
+                    },
+                    .block => |*block_id| {
+                        const block0 = self.compiler.blocks.items[block_id.*];
+                        for (block0.nodes.items) |*node| {
+                            node.* = node.* + offset;
+                        }
+                        try self.compiler.blocks.append(block0);
+                        block_id.* = self.compiler.blocks.items.len - 1;
+                    },
+                    .call => |*call| {
+                        call.*.head = call.*.head + offset;
+                        for (call.*.args.items) |*arg| {
+                            arg.* = arg.* + offset;
+                        }
+                    },
+                    .@"defer" => |*defer_expr| {
+                        defer_expr.*.pointer = defer_expr.*.pointer + offset;
+                        defer_expr.*.callback = defer_expr.*.callback + offset;
+                    },
+                    .@"enum" => |*e| {
+                        e.*.typename = e.*.typename + offset;
+                        for (e.*.cases.items) |*c| {
+                            c.* = c.* + offset;
+                        }
+
+                        for (e.*.methods) |*method| {
+                            method.* = method.* + offset;
+                        }
+                    },
+                    .enum_case => |*enum_case| {
+                        enum_case.*.name = enum_case.*.name + offset;
+                        if (enum_case.*.payload) |*pay| {
+                            for (pay.*.items) |*p| {
+                                p.* = p.* + offset;
+                            }
+                        }
+                    },
+                    .extern_type => |*extern_type| {
+                        extern_type.*.name = extern_type.*.name + offset;
+                    },
+                    .field => |*field| {
+                        field.*.name = field.*.name + offset;
+                        field.*.typename = field.*.typename + offset;
+                    },
+                    .@"for" => |*for_expr| {
+                        for_expr.*.variable = for_expr.*.variable + offset;
+                        for_expr.*.range = for_expr.*.range + offset;
+                        for_expr.*.block = for_expr.*.block + offset;
+                    },
+                    .fun_type => |*fun_type| {
+                        for (fun_type.*.params.items) |*param| {
+                            param.* = param.* + offset;
+                        }
+                        fun_type.*.ret = fun_type.*.ret + offset;
+                    },
+                    .@"if" => |*if_expr| {
+                        if_expr.*.condition = if_expr.*.condition + offset;
+                        if_expr.*.then_block = if_expr.*.then_block + offset;
+                        if (if_expr.*.else_expression) |*else_expr| {
+                            else_expr.* = else_expr.* + offset;
+                        }
+                    },
+                    .index => |*index| {
+                        index.*.target = index.*.target + offset;
+                        index.*.index = index.*.index + offset;
+                    },
+                    .let => |*let_stmt| {
+                        let_stmt.*.variable_name = let_stmt.*.variable_name + offset;
+                        if (let_stmt.*.ty) |*ty| {
+                            ty.* = ty.* + offset;
+                        }
+                        let_stmt.*.initializer = let_stmt.*.initializer + offset;
+                    },
+                    .match => |*match| {
+                        match.*.target = match.*.target + offset;
+                        for (match.*.match_arms) |*m| {
+                            m.*[0] = m.*[0] + offset;
+                            m.*[1] = m.*[1] + offset;
+                        }
+                    },
+                    .member_access => |*member_access| {
+                        member_access.*.target = member_access.*.target + offset;
+                        member_access.*.field = member_access.*.field + offset;
+                    },
+                    .named_value => |*named_value| {
+                        named_value.*.name = named_value.*.name + offset;
+                        named_value.*.value = named_value.*.value + offset;
+                    },
+                    .namespaced_lookup => |*namespaced_lookup| {
+                        namespaced_lookup.*.namespace = namespaced_lookup.*.namespace + offset;
+                        namespaced_lookup.*.item = namespaced_lookup.*.item + offset;
+                    },
+                    .new => |*new_expr| {
+                        new_expr.*.allocated = new_expr.*.allocated + offset;
+                    },
+                    .param => |*param| {
+                        param.*.name = param.*.name + offset;
+                        param.*.ty = param.*.ty + offset;
+                    },
+                    .range => |*range| {
+                        range.*.lhs = range.*.lhs + offset;
+                        range.*.rhs = range.*.rhs + offset;
+                    },
+                    .raw_buffer => |*raw_buffer| {
+                        for (raw_buffer.*.items) |*item| {
+                            item.* = item.* + offset;
+                        }
+                    },
+                    .raw_buffer_type => |*inner| {
+                        inner.*.inner = inner.*.inner + offset;
+                    },
+                    .resize_buffer => |*buffer| {
+                        buffer.*.pointer = buffer.*.pointer + offset;
+                        buffer.*.new_size = buffer.*.new_size + offset;
+                    },
+                    .@"return" => |*ret| {
+                        if (ret.*.?) |_| {
+                            ret.*.? = ret.*.? + offset;
+                        }
+                    },
+                    .statement => |*stmt| {
+                        stmt.* = stmt.* + offset;
+                    },
+                    .type => |*ty| {
+                        ty.*.name = ty.*.name + offset;
+                        if (ty.params) |_| {
+                            ty.*.params.? = ty.*.params.? + offset;
+                        }
+                    },
+                    .unsafe_block => |*ub| {
+                        ub.* = ub.* + offset;
+                    },
+                    .use => |*use| {
+                        use.*.path = use.*.path + offset;
+                    },
+                    .@"while" => |*while_expr| {
+                        while_expr.*.condition = while_expr.*.condition + offset;
+                        while_expr.*.block = while_expr.*.block + offset;
+                    },
+                    else => {},
+                }
+
+                try self.compiler.pushNode(ast_node);
+                try self.compiler.span_start.append(self.compiler.span_start.items[raw_node_id]);
+                try self.compiler.span_end.append(self.compiler.span_end.items[raw_node_id]);
+            }
+            initial_node_id = inner_initial_node_id + offset;
+            _body = inner_body + offset;
+        }
+    }
+
+    try self.compiler.functions.append(.{
+        .name = _name,
+        .params = new_params,
+        .lifetime_annotations = lifetime_annotations,
+        .type_params = type_params,
+        .inference_vars = inference_vars,
+        .return_node = return_node,
+        .return_type = return_type,
+        .initial_node_id = initial_node_id,
+        .body = _body,
+        .is_extern = is_extern,
+    });
+
+    const f_id = self.compiler.functions.items.len - 1;
+    try self.typecheckFun(f_id);
+
+    return f_id;
+}
+
+pub fn instantiateGenericType(self: *Typechecker, type_id: TypeId, replacements: *std.AutoHashMap(TypeId, TypeId)) !TypeId {
+    var replacements_copy = try replacements.clone();
+
+    switch (self.compiler.getType(type_id)) {
+        .@"enum" => |e| {
+            var new_variants = std.ArrayList(EnumVariant).init(self.alloc);
+            const methods = self.compiler.methodsOnType(type_id);
+            const new_methods = std.ArrayList(FuncId).init(self.alloc);
+
+            variant_label: for (e.variants.items) |variant| {
+                switch (variant) {
+                    .simple => try new_variants.append(variant),
+                    .single => |single| {
+                        if (replacements_copy.get(single.param)) |replacement| {
+                            try new_variants.append(.{ .single = .{
+                                .name = single.name,
+                                .param = replacement,
+                            } });
+                            continue :variant_label;
+                        }
+
+                        try new_variants.append(.{ .single = .{
+                            .name = single.name,
+                            .param = single.param,
+                        } });
+                    },
+                    .@"struct" => |s| {
+                        var new_params = std.ArrayList(EnumStructVariant).init(self.alloc);
+                        for (s.params.items) |param| {
+                            if (replacements_copy.get(param.ty)) |replacement| {
+                                try new_params.append(.{
+                                    .name = param.name,
+                                    .ty = replacement,
+                                });
+                            }
+                        }
+                        try new_variants.append(.{ .@"struct" = .{
+                            .name = s.name,
+                            .params = new_params,
+                        } });
+                    },
+                }
+            }
+
+            const new_type_id = try self.compiler.findOrCreateType(Type{
+                .@"enum" = .{
+                    // check type of params
+                    .generic_params = std.ArrayList(TypeId).init(self.alloc),
+                    .variants = new_variants,
+                },
+            });
+
+            try replacements_copy.put(self.compiler.getUnderlyingTypeId(type_id), self.compiler.getUnderlyingTypeId(new_type_id));
+
+            for (methods.items) |method| {
+                try new_methods.append(try self.instantiateGenericFun(method, &replacements_copy));
+            }
+
+            try self.compiler.insertMethodsOnType(new_type_id, new_methods);
+            return new_type_id;
+        },
+        .@"struct" => |s| {
+            var new_fields = std.ArrayList(TypeField).init(self.alloc);
+            var new_methods = std.ArrayList(FuncId).init(self.alloc);
+            const methods = self.compiler.methodsOnType(type_id);
+            const is_allocator = s.is_allocator;
+
+            for (s.fields.items) |type_field| {
+                if (replacements_copy.get(type_field.ty)) |replacement| {
+                    try new_fields.append(.{
+                        .member_access = type_field.member_access,
+                        .name = type_field.name,
+                        .ty = replacement,
+                        .where_defined = type_field.where_defined,
+                    });
+                    break;
+                }
+            }
+
+            const new_type_id = try self.compiler.findOrCreateType(Type{
+                .@"struct" = .{
+                    // check type of params
+                    .generic_params = std.ArrayList(TypeId).init(self.alloc),
+                    .fields = new_fields,
+                    .is_allocator = is_allocator,
+                },
+            });
+
+            try replacements_copy.put(self.compiler.getUnderlyingTypeId(type_id), self.compiler.getUnderlyingTypeId(new_type_id));
+
+            for (methods.items) |method| {
+                try new_methods.append(try self.instantiateGenericFun(method, &replacements_copy));
+            }
+
+            try self.compiler.insertMethodsOnType(new_type_id, new_methods);
+            return new_type_id;
+        },
+        .pointer => |ptr| {
+            if (replacements_copy.get(ptr.target)) |replacement| {
+                return self.compiler.findOrCreateType(.{ .pointer = .{
+                    .pointer_type = ptr.pointer_type,
+                    .optional = ptr.optional,
+                    .target = replacement,
+                } });
+            }
+            return type_id;
+        },
+        else => {
+            // Check to see if we have a replacement for this exact TypeId. If so, return the replacement.
+            // Otherwise return the original type_id
+            if (replacements_copy.get(type_id)) |replacement| {
+                return replacement;
+            }
+            return type_id;
+        },
+    }
+}
+
 pub fn typecheckVarOrFunction(self: *Typechecker, node_id: Parser.NodeId, var_or_fun_id: ?VarOrFuncId) !TypeId {
     if (var_or_fun_id) |var_or_fun| {
         switch (var_or_fun) {
             .var_id => |var_id| {
-                // TODO check for variable move
+                if (try self.varWasPreviouslyMoved(var_id)) |where_moved| {
+                    try self.@"error"("moved variable accessed after move", node_id);
+                    // TODO add note where var moved
+                    _ = where_moved;
+                }
                 try self.compiler.var_resolution.put(node_id, var_id);
 
                 const variable = self.compiler.getVariable(var_id);
@@ -2570,7 +2966,7 @@ pub fn findNameInScope(self: *Typechecker, name: Parser.NodeId) ?VarOrFuncId {
 }
 
 pub fn findVariableInScope(self: *Typechecker, var_name: Parser.NodeId) ?VarId {
-    var name = self.compiler.source[self.compiler.span_start[var_name]..self.compiler.span_end[var_name]];
+    var name = self.compiler.source[self.compiler.span_start.items[var_name]..self.compiler.span_end.items[var_name]];
 
     // Expand the shorthand, and look for 'self' instead
     if (std.mem.eql(u8, name, ".")) {
@@ -2579,7 +2975,7 @@ pub fn findVariableInScope(self: *Typechecker, var_name: Parser.NodeId) ?VarId {
 
     var i: i32 = @intCast(self.scope.items.len - 1);
     while (i >= 0) : (i -= 1) {
-        if (self.scope.variables.get(name)) |var_id| {
+        if (self.scope.items[@intCast(i)].variables.get(name)) |var_id| {
             return var_id;
         }
     }

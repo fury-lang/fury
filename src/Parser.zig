@@ -896,7 +896,7 @@ pub fn typeName(self: *Parser) anyerror!NodeId {
         );
     }
 
-    var pointer_type = PointerType.Unknown;
+    var pointer_type = PointerType.Shared;
     if (self.isKeyword("owned")) {
         _ = self.next();
         pointer_type = PointerType.Owned;
