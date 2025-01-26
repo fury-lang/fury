@@ -428,7 +428,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                             try output.appendSlice(_id);
                             try output.appendSlice(" /*");
                             try output.appendSlice(single.name);
-                            try output.appendSlice(" */");
+                            try output.appendSlice(" */ ;\n");
                         },
                         .@"struct" => |s| {
                             // FIXME!! This will name collide because of C naming resolution
@@ -486,7 +486,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                                 const _id = try std.fmt.allocPrint(self.alloc, "{}_{} /* ", .{ case_offset, param_idx });
                                 try output.appendSlice(_id);
                                 try output.appendSlice(param.name);
-                                try output.appendSlice(" */ ;\n");
+                                try output.appendSlice(" */ ");
                             }
                         },
                         .simple => {},
@@ -1070,6 +1070,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                 .call => |c| {
                     const head = c.head;
                     const args = c.args;
+                    std.debug.print("head->{s}\n", .{self.compiler.getSource(head)});
                     const call_target = self.compiler.call_resolution.get(head).?;
 
                     switch (call_target) {

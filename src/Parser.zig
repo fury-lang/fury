@@ -1437,7 +1437,7 @@ pub fn enumCase(self: *Parser) !NodeId {
     var payload: ?std.ArrayList(NodeId) = std.ArrayList(NodeId).init(self.alloc);
     if (self.isExpectedToken(TokenType.LParen)) {
         _ = self.next();
-        const payload_name = try self.name();
+        const payload_name = try self.typeName();
         if (!self.isExpectedToken(TokenType.RParen)) {
             _ = try self.@"error"("expected right paren ')'");
         } else {

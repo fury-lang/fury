@@ -5,16 +5,16 @@
 - math ✅
 - hello_world ✅
 - raw_buffers(except raw_buffer_defer.pn same issue as with lifetime cleanup_on_*) ✅
-- parsing(except unicode3) ✅
+- parsing ✅
 - data_types ✅
 - control_flow ✅
 - variables ✅
 - typechecking ✅
 - defer(expect defer_simple.pn same issue, related to memory cleanup) ✅
+- enums ✅
 - classes
 - data_structrues
 - structs
-- enums
 - extern_c
 - first_class_functions
 - generics

@@ -2162,6 +2162,11 @@ pub fn typecheckNamespacedTypeLookup(self: *Typechecker, namespace: Parser.NodeI
                                             return VOID_TYPE_ID;
                                         }
 
+                                        try self.compiler.call_resolution.put(head, Compiler.CallTarget{ .enum_constructor = .{
+                                            .type_id = type_id.*,
+                                            .case_offset = case_offset,
+                                        } });
+
                                         return self.compiler.findOrCreateType(.{
                                             .pointer = .{
                                                 .pointer_type = .Shared,
@@ -2178,7 +2183,7 @@ pub fn typecheckNamespacedTypeLookup(self: *Typechecker, namespace: Parser.NodeI
                             },
                             .@"struct" => |s| {
                                 if (std.mem.eql(u8, s.name, case_name)) {
-                                    if (args.items.len == 1) {
+                                    if (args.items.len == s.params.items.len) {
                                         var replacements = std.AutoHashMap(TypeId, TypeId).init(self.alloc);
 
                                         for (args.items, 0..) |arg, idx| {
