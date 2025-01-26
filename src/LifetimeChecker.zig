@@ -515,7 +515,7 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
             // Before we leave, make sure we haven't expanded the lifetime beyond what is allowed
             switch (required_lifetime) {
                 .Local => {
-                    if (std.mem.eql(u8, @tagName(self.compiler.getNodeLifetime(node_id)), "scope")) {
+                    if (!std.mem.eql(u8, @tagName(self.compiler.getNodeLifetime(node_id)), "scope")) {
                         // We're not one of the local scopes, we're escaping but this is required to be a local allocation
                         const error_msg = try std.fmt.allocPrint(self.alloc, "allocation is not local, lifetime inferred to be {s}", .{self.lifetimeName(self.compiler.getNodeLifetime(node_id))});
                         try self.@"error"(error_msg, node_id);
@@ -645,6 +645,7 @@ pub fn checkLifetimes(self: *LifetimeChecker) !Compiler {
                         } else if (std.mem.eql(u8, @tagName(equality.left), "variable") and std.mem.eql(u8, @tagName(equality.right), "variable")) {
                             if (equality.left.variable == param.var_id) {
                                 self.compiler.setNodeLifetime(param_node_id, .{ .param = .{ .var_id = equality.right.variable } });
+                                continue :param_label;
                             }
                         }
                     },
@@ -668,20 +669,21 @@ pub fn checkLifetimes(self: *LifetimeChecker) !Compiler {
     // Before we leave, go through our possible allocation sites and see
     // which local scopes allocate for themselves. If they do, mark their
     // blocks so we can properly deallocate these resources
-    for (self.possible_allocation_sites.items) |site| {
-        switch (self.compiler.getNodeLifetime(site.node_id)) {
-            .scope => |scope| {
-                if (site.scope_level > scope.level) {
-                    const idx = site.blocks.items.len - site.scope_level - scope.level;
-                    if (idx >= 0) {
-                        const block_id = site.blocks.items[idx];
-                        self.compiler.blocks.items[block_id].may_locally_allocate = scope.level;
-                    }
-                }
-            },
-            else => {},
-        }
-    }
+    // for (self.possible_allocation_sites.items) |site| {
+    //     switch (self.compiler.getNodeLifetime(site.node_id)) {
+    //         .scope => |scope| {
+    //             if (site.scope_level > scope.level) {
+    //                 // verify this
+    //                 const idx: i32 = @intCast(site.blocks.items.len - (site.scope_level - scope.level));
+    //                 if (idx >= 0) {
+    //                     const block_id = site.blocks.items[@intCast(idx)];
+    //                     self.compiler.blocks.items[block_id].may_locally_allocate = scope.level;
+    //                 }
+    //             }
+    //         },
+    //         else => {},
+    //     }
+    // }
 
     return self.compiler;
 }

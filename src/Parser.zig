@@ -703,16 +703,20 @@ pub fn funDefinition(self: *Parser) anyerror!NodeId {
             } else if (self.isExpectedToken(TokenType.Comma)) {
                 _ = self.next();
             } else if (self.isExpectedToken(TokenType.Name)) {
-                var lhs = try self.variable();
+                var lhs: NodeId = undefined;
                 if (self.isKeyword("return")) {
                     lhs = try self.returnLifetime();
+                } else {
+                    lhs = try self.variable();
                 }
 
                 const op = try self.equalsEquals();
 
-                var rhs = try self.variable();
+                var rhs: NodeId = undefined;
                 if (self.isKeyword("return")) {
                     rhs = try self.returnLifetime();
+                } else {
+                    rhs = try self.variable();
                 }
 
                 const _span_start = self.compiler.span_start.items[lhs];

@@ -51,7 +51,8 @@ pub fn codegenTypename(self: *Codegen, type_id: Typechecker.TypeId, local_infere
             if (type_id == Typechecker.VOID_TYPE_ID) {
                 try output.appendSlice("void");
             } else if (type_id == Typechecker.I64_TYPE_ID) {
-                try output.appendSlice("int64_t");
+                // check why we got error without the extra space
+                try output.appendSlice("int64_t ");
             } else if (type_id == Typechecker.F64_TYPE_ID) {
                 try output.appendSlice("double");
             } else if (type_id == Typechecker.C_STRING_TYPE_ID) {
@@ -862,6 +863,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
         .greater_than => try output.append('>'),
         .@"and" => try output.appendSlice("&&"),
         .@"or" => try output.appendSlice("||"),
+        .bitwise_and => try output.append('&'),
         .bitwise_or => try output.append('|'),
         .shift_left => try output.appendSlice("<<"),
         .shift_right => try output.appendSlice(">>"),
@@ -1514,7 +1516,10 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
             try self.codegenNode(type_coercion.source_node, local_inferences, output);
             try output.appendSlice(")");
         },
-        else => @panic("unsupported node"),
+        else => {
+            std.debug.print("node_type: {any}\n", .{self.compiler.getNode(node_id)});
+            @panic("unsupported node");
+        },
     }
 }
 

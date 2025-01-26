@@ -1,0 +1,21 @@
+## Test cases
+
+- lifetime_inference(except cleanup_on_* ones due to issue of memory cleanup, related to lifetimechecker) ✅
+- owned_abstraction ✅
+- math ✅
+- hello_world ✅
+- raw_buffers(except raw_buffer_defer.pn same issue as with lifetime cleanup_on_*) ✅
+- parsing(except unicode3) ✅
+- data_types ✅
+- control_flow ✅
+- variables ✅
+- typechecking ✅
+- defer(expect defer_simple.pn same issue, related to memory cleanup) ✅
+- classes
+- data_structrues
+- structs
+- enums
+- extern_c
+- first_class_functions
+- generics
+- modules

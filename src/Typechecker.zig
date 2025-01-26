@@ -725,7 +725,7 @@ pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params:
                             continue;
                         }
                     },
-                    .return_lifetime => lhs = .{ .@"return" = Void.void },
+                    .return_lifetime => rhs = .{ .@"return" = Void.void },
                     else => @panic("internal error: non-variable and non-return lifetime"),
                 }
 
@@ -1028,7 +1028,7 @@ pub fn typecheckStruct(self: *Typechecker, typename: Parser.NodeId, fields: std.
         const field_name_text = self.compiler.getSource(field_name);
         const field_type_id = try self.typecheckTypename(field_type);
 
-        if (!self.compiler.isCopyableType(field_type)) {
+        if (!self.compiler.isCopyableType(field_type_id)) {
             has_pointers = true;
         }
 
