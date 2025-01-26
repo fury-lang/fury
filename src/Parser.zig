@@ -1029,7 +1029,7 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
             }
 
             var rhs: NodeId = undefined;
-            if (@TypeOf(self.compiler.getNode(op)) == @TypeOf(AstNode.as)) {
+            if (std.mem.eql(u8, @tagName(self.compiler.getNode(op)), "as")) {
                 rhs = try self.typeName();
             } else if (self.isSimpleExpression()) {
                 rhs = try self.simpleExpression();
@@ -2353,7 +2353,7 @@ pub fn skipComment(self: *Parser) void {
 pub fn lexName(self: *Parser) ?Token {
     const span_start = self.current_file.span_offset;
     var span_position = span_start;
-    while (span_position < self.currentFileEnd() and (!isAsciiWhiteSpace(self.compiler.source[span_position]) and !isAsciiPunctuation(self.compiler.source[span_position]) or self.compiler.source[span_position] == '_')) {
+    while (span_position < self.currentFileEnd() and ((!isAsciiWhiteSpace(self.compiler.source[span_position]) and !isAsciiPunctuation(self.compiler.source[span_position]) or self.compiler.source[span_position] == '_'))) {
         span_position += 1;
     }
     self.current_file.span_offset = span_position;
@@ -2706,7 +2706,7 @@ fn isAsciiWhiteSpace(c: u8) bool {
 }
 
 fn isAsciiPunctuation(c: u8) bool {
-    return c == '.' or c == ',' or c == ';' or c == ':' or c == '(' or c == ')' or c == '[' or c == ']' or c == '{' or c == '}' or c == '<' or c == '>' or c == '=' or c == '$' or c == '|' or c == '!' or c == '~' or c == '&' or c == '\'' or c == '"';
+    return c == '.' or c == ',' or c == ';' or c == ':' or c == '(' or c == ')' or c == '[' or c == ']' or c == '{' or c == '}' or c == '<' or c == '>' or c == '=' or c == '$' or c == '|' or c == '!' or c == '~' or c == '&' or c == '\'' or c == '"' or c == '?';
 }
 
 fn isAsciiDigit(c: u8) bool {

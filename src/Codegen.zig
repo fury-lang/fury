@@ -240,7 +240,7 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
     if (base_classes.*) |base_classes0| {
         const base_class = base_classes0.items;
         try output.appendSlice("initializer_");
-        const base_id = try std.fmt.allocPrint(self.alloc, "{d}", .{base_class});
+        const base_id = try std.fmt.allocPrint(self.alloc, "{}", .{base_class[0]});
         try output.appendSlice(base_id);
         try output.appendSlice("(&tmp->baseclass");
 
@@ -249,7 +249,7 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
             switch (base_type) {
                 .@"struct" => {
                     for (base_type.@"struct".fields.items, 0..) |type_field, idx| {
-                        try output.appendSlice("base_field_");
+                        try output.appendSlice(", base_field_");
                         const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
                         try output.appendSlice(f_id);
                         try output.appendSlice(" /* ");
@@ -264,10 +264,16 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
         }
         try output.appendSlice(");\n");
 
-        // TODO virtual table
-        // for (base_classes0.items, 0..) |base, depth| {
-
-        // }
+        for (base_classes0.items, 0..) |base, depth| {
+            if (self.compiler.fullySatifiesVirtualMethods(type_id, base)) {
+                try output.appendSlice("tmp->");
+                for (0..depth + 1) |_| {
+                    try output.appendSlice("baseclass.");
+                }
+                const vtable_struct = try std.fmt.allocPrint(self.alloc, "vtable = &vtable_struct_{s};", .{inner_type_id});
+                try output.appendSlice(vtable_struct);
+            }
+        }
     }
 
     for (fields.items, 0..) |type_field, idx| {
@@ -353,7 +359,13 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                     continue;
                 }
 
-                // TODO virtual methods
+                const methods = self.compiler.methodsOnType(idx);
+                const virtual_methods = self.compiler.virtualMethodsOnType(idx);
+
+                if (!(virtual_methods.items.len == 0)) {
+                    try self.codegenVtableDecl(idx, @constCast(&virtual_methods), output);
+                    try self.codegenVirtFunctionTypedefs(@constCast(&virtual_methods), output);
+                }
 
                 try output.appendSlice("struct struct_");
                 const id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
@@ -375,7 +387,12 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                     try output.appendSlice(" baseclass;\n");
                 }
 
-                // TODO vitual methods
+                if (!(virtual_methods.items.len == 0)) {
+                    try output.appendSlice("const vtable_");
+                    const id_str = try std.fmt.allocPrint(self.alloc, "{}", .{idx});
+                    try output.appendSlice(id_str);
+                    try output.appendSlice("* vtable;\n");
+                }
 
                 for (_struct.fields.items, 0..) |type_field, _idx| {
                     var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
@@ -391,7 +408,10 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
 
                 try output.appendSlice("};\n");
 
-                // TODO vtables predecls
+                if (base_classes) |classes| {
+                    try self.codegenVtableMethodPredecls(@constCast(&classes), @constCast(&methods), output);
+                    try self.codegenVtableInstantiation(@constCast(&classes), idx, @constCast(&methods), output);
+                }
 
                 if (self.compiler.findPointerTo(idx)) |ptr| {
                     try self.codegenInitializerFunction(ptr, @constCast(&_struct.fields), @constCast(&base_classes), output);
@@ -664,16 +684,22 @@ pub fn codegenVtableInstantiation(self: *Codegen, base_classes: *std.ArrayList(T
     var i: i32 = @intCast(base_classes.items.len - 1);
     bases: while (i >= 0) : (i -= 1) {
         const base_class = base_classes.items[@intCast(i)];
-        // TODO satisfy virtual methods
-        const vtable_fully_satisfied = false;
+        var vtable_fully_satisfied = false;
+        if (self.compiler.fullySatifiesVirtualMethods(type_id, base_class)) {
+            vtable_fully_satisfied = true;
+        }
 
         if (!vtable_fully_satisfied) {
             continue :bases;
         }
 
         const virtual_methods = self.compiler.virtualMethodsOnType(base_class);
-        _ = virtual_methods;
-        // TODO convert to hashmap (method_name -> method_id)
+        var virtual_methods_map = std.StringHashMap(Typechecker.FuncId).init(self.alloc);
+        for (virtual_methods.items) |id| {
+            const node_id = self.compiler.functions.items[id].name;
+            const name = self.compiler.getSource(node_id);
+            try virtual_methods_map.put(name, id);
+        }
 
         const base_id = try std.fmt.allocPrint(self.alloc, "{d}", .{base_class});
         const type_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
@@ -687,8 +713,12 @@ pub fn codegenVtableInstantiation(self: *Codegen, base_classes: *std.ArrayList(T
             const fun = self.compiler.functions.items[method];
             const fun_name = self.compiler.getSource(fun.name);
 
-            const virt_fun_id: Typechecker.FuncId = undefined;
-            // get from virtual_methods hashmap
+            var virt_fun_id: Typechecker.FuncId = undefined;
+            if (virtual_methods_map.get(fun_name)) |get_id| {
+                virt_fun_id = get_id;
+            } else {
+                continue;
+            }
 
             const method_id = try std.fmt.allocPrint(self.alloc, "{d}", .{method});
             const virt_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{virt_fun_id});
@@ -730,7 +760,7 @@ pub fn codegenVtableMethodPredecls(self: *Codegen, base_classes: *std.ArrayList(
             for (fun.params.items) |param| {
                 try output.appendSlice(", ");
                 const variable_ty = self.compiler.getVariable(param.var_id).ty;
-                try self.codegenTypename(variable_ty, @constCast(fun.inference_vars), output);
+                try self.codegenTypename(variable_ty, @constCast(&fun.inference_vars), output);
                 try output.append(' ');
                 try output.appendSlice("variable_");
                 const param_id = try std.fmt.allocPrint(self.alloc, "{d}", .{param.var_id});
@@ -882,7 +912,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                 Parser.AstNode.as => {
                     try output.appendSlice("((");
                     const rhs_type_id = self.compiler.getNodeType(rhs);
-                    try self.codegenNode(rhs_type_id, local_inferences, output);
+                    try self.codegenTypename(rhs_type_id, local_inferences, output);
                     try output.append(')');
                     try self.codegenNode(lhs, local_inferences, output);
                     try output.append(')');
@@ -963,7 +993,16 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                         try output.appendSlice(self.compiler.getSource(fun.name));
                         try output.append('(');
                     } else {
-                        // TODO check for member access
+                        var target: Parser.NodeId = undefined;
+                        switch (self.compiler.getNode(head)) {
+                            .member_access => |ma| {
+                                target = ma.target;
+                            },
+                            else => @panic("internal error: expected member access in call"),
+                        }
+
+                        try self.codegenNode(target, local_inferences, output);
+                        try output.appendSlice("->vtable->");
                         try output.appendSlice(self.compiler.getSource(fun.name));
                         try output.append('(');
 
@@ -1070,7 +1109,6 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                 .call => |c| {
                     const head = c.head;
                     const args = c.args;
-                    std.debug.print("head->{s}\n", .{self.compiler.getSource(head)});
                     const call_target = self.compiler.call_resolution.get(head).?;
 
                     switch (call_target) {

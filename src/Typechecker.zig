@@ -351,6 +351,22 @@ pub fn unifyTypes(self: *Typechecker, lhs: TypeId, rhs: TypeId, local_inferences
     }
 }
 
+pub fn checkIsSubtypeOf(self: *Typechecker, expected_type: TypeId, actual_type: TypeId, local_inferences: *std.ArrayList(TypeId)) bool {
+    var expected_ty = self.compiler.resolveType(expected_type, local_inferences);
+    expected_ty = self.compiler.getUnderlyingTypeId(expected_ty);
+    var actual_ty = self.compiler.resolveType(actual_type, local_inferences);
+    actual_ty = self.compiler.getUnderlyingTypeId(actual_ty);
+
+    var base_classes = std.ArrayList(TypeId).init(self.alloc);
+    if (self.compiler.base_classes.get(actual_ty)) |classes| {
+        base_classes = classes;
+    } else {
+        return false;
+    }
+
+    return base_classes.items.contains(expected_ty);
+}
+
 pub fn typecheckTypename(self: *Typechecker, node_id: Parser.NodeId) !TypeId {
     switch (self.compiler.getNode(node_id)) {
         .type => |ty| {
@@ -1229,6 +1245,13 @@ pub fn typecheckBlock(self: *Typechecker, node_id: Parser.NodeId, block_id: Pars
 
                 _ = try self.typecheckEnum(e.typename, e.cases, e.methods);
             },
+            .extern_type => |extern_type| {
+                const type_name = self.compiler.getSource(extern_type.name);
+                const ty = Type{ .c_external_type = extern_type.name };
+                const type_id = try self.compiler.findOrCreateType(ty);
+
+                try self.addTypeToScope(type_name, type_id);
+            },
             else => {},
         }
     }
@@ -1427,7 +1450,8 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                     node_type = BOOL_TYPE_ID;
                 },
                 .as => {
-                    const rhs_ty = try self.typecheckNode(rhs, local_inferences);
+                    _ = try self.typecheckNode(lhs, local_inferences);
+                    const rhs_ty = try self.typecheckTypename(rhs);
 
                     self.compiler.setNodeType(rhs, rhs_ty);
                     self.compiler.setNodeType(node_id, rhs_ty);

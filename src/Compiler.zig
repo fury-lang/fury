@@ -114,16 +114,6 @@ pub fn print(self: *Compiler) void {
     std.debug.print("num nodes: {}\n", .{self.ast_node.items.len});
     for (self.ast_node.items, 0..) |node, node_id| {
         std.debug.print("{}, {any}\n ", .{ node_id, node });
-        // switch (self.getNode(node_id)) {
-        //     .enum_case => |e| {
-        //         if (e.payload) |payloads| {
-        //             for (payloads.items) |item| {
-        //                 std.debug.print("{}, ", .{item});
-        //             }
-        //         }
-        //     },
-        //     else => {}
-        // }
         // std.debug.print("\n", .{});
         // std.debug.print("{d} {any},    (lifetime: ", .{ node_id, node });
         // std.debug.print("{}: {s}: ", .{ node_id, self.getSource(node_id) });
@@ -534,7 +524,7 @@ pub fn insertMethodsOnType(self: *Compiler, type_id: Typechecker.TypeId, methods
 }
 
 pub fn insertVirtualMethodsOnType(self: *Compiler, type_id: Typechecker.TypeId, methods: std.ArrayList(Typechecker.FuncId)) !void {
-    if (!(self.methods_on_type.count() == 0)) {
+    if (!(methods.items.len == 0)) {
         try self.virtual_methods_on_type.put(type_id, methods);
     }
 }
@@ -544,14 +534,48 @@ pub fn hasUnsatisfiedVirtualMethods(self: *Compiler, idx: Typechecker.TypeId) bo
         return true;
     }
 
-    // TODO flatten the list
-    // for (self.base_classes.get(idx).items) |base_class| {
-    //     if (!self.hasFullySatisfiesVirtualMethods(base_class)) {
-    //         return true;
-    //     }
-    // }
+    const base_classes = self.base_classes.get(idx);
+    if (base_classes) |classes| {
+        for (classes.items) |class| {
+            if (!self.fullySatifiesVirtualMethods(idx, class)) {
+                return true;
+            }
+        }
+    }
 
     return false;
+}
+
+pub fn fullySatifiesVirtualMethods(self: *Compiler, type_id: Typechecker.TypeId, base_class: Typechecker.TypeId) bool {
+    const ty_id = self.getUnderlyingTypeId(type_id);
+    const base_id = self.getUnderlyingTypeId(base_class);
+
+    const virtual_methods = self.virtual_methods_on_type.get(base_id).?;
+    const methods = self.methodsOnType(ty_id);
+
+    var virtual_methods_map = std.StringHashMap(Typechecker.FuncId).init(self.alloc);
+    for (virtual_methods.items) |id| {
+        const node_id = self.functions.items[id].name;
+        virtual_methods_map.put(self.getSource(node_id), id) catch unreachable;
+    }
+
+    // TODO use set here in future
+    var methods_names = std.StringHashMap(Typechecker.FuncId).init(self.alloc);
+    for (methods.items) |id| {
+        const node_id = self.functions.items[id].name;
+        if (methods_names.get(self.getSource(node_id))) |_| {} else {
+            methods_names.put(self.getSource(node_id), id) catch unreachable;
+        }
+    }
+
+    var iter = virtual_methods_map.iterator();
+    while (iter.next()) |entry| {
+        if (!methods_names.contains(entry.key_ptr.*)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {

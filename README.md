@@ -12,10 +12,10 @@
 - typechecking ✅
 - defer(expect defer_simple.pn same issue, related to memory cleanup) ✅
 - enums ✅
+- structs ✅
+- data_structrues ✅
+- extern_c(same memory issue with file_io_abstraction.pn and file_ptr.defer.pn) ✅
 - classes
-- data_structrues
-- structs
-- extern_c
 - first_class_functions
 - generics
 - modules
