@@ -16,6 +16,6 @@
 - data_structrues ✅
 - extern_c(same memory issue with file_io_abstraction.pn and file_ptr.defer.pn) ✅
 - classes ✅
-- first_class_functions
+- first_class_functions(except first_class_function_allocation*.pn, related to memory cleanup) ✅
 - generics
 - modules

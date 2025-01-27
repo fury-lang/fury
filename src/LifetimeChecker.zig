@@ -470,16 +470,16 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
                             for (args.items) |arg| {
                                 try self.checkNodeLifetime(arg, scope_level);
                             }
-                        } else {
-                            try self.checkNodeLifetime(head, scope_level);
-                            for (args.items) |arg| {
-                                try self.checkNodeLifetime(arg, scope_level);
-                            }
-
-                            try self.currentBlockMayAllocate(scope_level, node_id);
                         }
                     },
-                    else => {},
+                    else => {
+                        try self.checkNodeLifetime(head, scope_level);
+                        for (args.items) |arg| {
+                            try self.checkNodeLifetime(arg, scope_level);
+                        }
+
+                        try self.currentBlockMayAllocate(scope_level, node_id);
+                    },
                 }
             }
         },

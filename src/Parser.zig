@@ -1573,7 +1573,8 @@ pub fn variableOrCall(self: *Parser) !NodeId {
 
         if (self.isExpectedToken(TokenType.LParen)) {
             var head = try self.createNode(AstNode{ .name = Void.void }, name_start, name_end);
-            if (self.isExpectedToken(TokenType.LParen)) {
+            // for handling first class functions we use while loop instead of simple if condition check
+            while (self.isExpectedToken(TokenType.LParen)) {
                 // We're a call
                 try self.lparen();
                 var args = std.ArrayList(NodeId).init(self.alloc);

@@ -36,7 +36,7 @@ pub fn codegenTypename(self: *Codegen, type_id: Typechecker.TypeId, local_infere
         },
         .fun => {
             try output.appendSlice("fun_ty_");
-            const id = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+            const id = try std.fmt.allocPrint(self.alloc, "{d} ", .{type_id});
             try output.appendSlice(id);
         },
         .c_external_type => |c_ext| {
