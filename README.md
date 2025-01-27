@@ -15,7 +15,7 @@
 - structs ✅
 - data_structrues ✅
 - extern_c(same memory issue with file_io_abstraction.pn and file_ptr.defer.pn) ✅
-- classes
+- classes ✅
 - first_class_functions
 - generics
 - modules

@@ -298,8 +298,8 @@ pub fn unifyTypes(self: *Typechecker, lhs: TypeId, rhs: TypeId, local_inferences
         // Also, if an owned pointer is assigned to a shared pointer, then we'll
         // allow the move into a shared pointer, effectively removing the owned-ness.
         // We can do this because the ownership will move.
-        return lhs_ty.pointer.pointer_type == Parser.PointerType.Unknown or (lhs_ty.pointer.pointer_type == rhs_ty.pointer.pointer_type) or (lhs_ty.pointer.pointer_type == Parser.PointerType.Shared and
-            rhs_ty.pointer.pointer_type == Parser.PointerType.Owned) and lhs_ty.pointer.target == rhs_ty.pointer.target and (lhs_ty.pointer.optional == rhs_ty.pointer.optional or lhs_ty.pointer.optional);
+        return (lhs_ty.pointer.pointer_type == Parser.PointerType.Unknown or (lhs_ty.pointer.pointer_type == rhs_ty.pointer.pointer_type) or (lhs_ty.pointer.pointer_type == Parser.PointerType.Shared and
+            rhs_ty.pointer.pointer_type == Parser.PointerType.Owned)) and lhs_ty.pointer.target == rhs_ty.pointer.target and (lhs_ty.pointer.optional == rhs_ty.pointer.optional or lhs_ty.pointer.optional);
     } else if (std.mem.eql(u8, @tagName(lhs_ty), "raw_buffer") and std.mem.eql(u8, @tagName(rhs_ty), "raw_buffer")) {
         const lhs_inner = lhs_ty.raw_buffer;
         const rhs_inner = rhs_ty.raw_buffer;
@@ -364,7 +364,7 @@ pub fn checkIsSubtypeOf(self: *Typechecker, expected_type: TypeId, actual_type: 
         return false;
     }
 
-    return base_classes.items.contains(expected_ty);
+    return containsClass(base_classes, expected_ty);
 }
 
 pub fn typecheckTypename(self: *Typechecker, node_id: Parser.NodeId) !TypeId {
@@ -580,9 +580,8 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                 const variable = self.compiler.getVariable(params.items[idx].var_id);
                 const variable_ty = variable.ty;
                 const variable_method = variable.name;
-                if (self.unifyTypes(arg_ty, variable_ty, local_inferences)) {
-                    // TODO check for subtype
-                    _ = variable_method;
+                if (self.unifyTypes(arg_ty, variable_ty, local_inferences)) {} else if (self.checkIsSubtypeOf(variable_ty, arg_ty, local_inferences)) {
+                    _ = try self.compiler.replaceNode(arg, variable_method);
                 } else {
                     const expected_type = self.compiler.resolveType(arg_ty, local_inferences);
                     const found_type = self.compiler.resolveType(variable_ty, local_inferences);
@@ -613,7 +612,6 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
 
                 const variable_ty = variable.ty;
                 const variable_node_id = variable.name;
-                _ = variable_node_id;
 
                 if (self.compiler.isTypeVariable(variable_ty)) {
                     if (type_var_replacements.get(variable_ty)) |replacement| {
@@ -628,9 +626,9 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                     } else {
                         try type_var_replacements.put(self.compiler.getUnderlyingTypeId(variable_ty), self.compiler.getUnderlyingTypeId(arg_type));
                     }
-                } else if (self.unifyTypes(variable_ty, arg_type, local_inferences)) {}
-                // TODO check for subtype
-                else {
+                } else if (self.unifyTypes(variable_ty, arg_type, local_inferences)) {} else if (self.checkIsSubtypeOf(variable_ty, arg_type, local_inferences)) {
+                    _ = try self.compiler.replaceNode(arg, variable_node_id);
+                } else {
                     const expected_type = self.compiler.resolveType(variable_ty, local_inferences);
                     const found_type = self.compiler.resolveType(arg_type, local_inferences);
                     const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ try self.compiler.prettyType(expected_type), try self.compiler.prettyType(found_type) });
@@ -1139,7 +1137,7 @@ pub fn typecheckStruct(self: *Typechecker, typename: Parser.NodeId, fields: std.
             for (virtual_methods.items) |method| {
                 const fun = self.compiler.functions.items[method];
                 const method_name = self.compiler.getSource(fun.name);
-                if (!contains(implemented_methods, method_name)) {
+                if (contains(implemented_methods, method_name)) {
                     try virtual_fun_ids.append(method);
                 }
             }
@@ -1940,7 +1938,7 @@ pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {
 
                 if (!self.typeIsOwned(return_type)) {
                     if (return_node) |_| {
-                        // TODO add a not
+                        // TODO add a note
                     }
                     return false;
                 }
@@ -3118,6 +3116,16 @@ pub fn isListEqual(a: []TypeId, b: []TypeId) bool {
 pub fn contains(a: std.ArrayList([]const u8), b: []const u8) bool {
     for (a.items) |item| {
         if (std.mem.eql(u8, item, b)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+pub fn containsClass(a: std.ArrayList(TypeId), id: TypeId) bool {
+    for (a.items) |item| {
+        if (item == id) {
             return true;
         }
     }

@@ -164,14 +164,14 @@ pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fie
 
     for (base_classes.items) |base_class| {
         const base_type = self.compiler.getType(base_class);
-        if (@TypeOf(base_type) != @TypeOf(Typechecker.Type.@"struct")) {
+        if (!std.mem.eql(u8, @tagName(base_type), "struct")) {
             @panic("base classes should be struct Types");
         }
 
         for (base_type.@"struct".fields.items, 0..) |type_field, idx| {
             const b_id = try std.fmt.allocPrint(self.alloc, "{d}", .{base_class});
             const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
-            try output.appendSlice("base_");
+            try output.appendSlice(", base_");
             try output.appendSlice(b_id);
             try output.appendSlice("_field_");
             try output.appendSlice(f_id);
@@ -265,13 +265,15 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
         try output.appendSlice(");\n");
 
         for (base_classes0.items, 0..) |base, depth| {
-            if (self.compiler.fullySatifiesVirtualMethods(type_id, base)) {
-                try output.appendSlice("tmp->");
-                for (0..depth + 1) |_| {
-                    try output.appendSlice("baseclass.");
+            if (self.compiler.fullySatifiesVirtualMethods(type_id, base)) |cond| {
+                if (cond) {
+                    try output.appendSlice("tmp->");
+                    for (0..depth + 1) |_| {
+                        try output.appendSlice("baseclass.");
+                    }
+                    const vtable_struct = try std.fmt.allocPrint(self.alloc, "vtable = &vtable_struct_{s};", .{inner_type_id});
+                    try output.appendSlice(vtable_struct);
                 }
-                const vtable_struct = try std.fmt.allocPrint(self.alloc, "vtable = &vtable_struct_{s};", .{inner_type_id});
-                try output.appendSlice(vtable_struct);
             }
         }
     }
@@ -685,8 +687,8 @@ pub fn codegenVtableInstantiation(self: *Codegen, base_classes: *std.ArrayList(T
     bases: while (i >= 0) : (i -= 1) {
         const base_class = base_classes.items[@intCast(i)];
         var vtable_fully_satisfied = false;
-        if (self.compiler.fullySatifiesVirtualMethods(type_id, base_class)) {
-            vtable_fully_satisfied = true;
+        if (self.compiler.fullySatifiesVirtualMethods(type_id, base_class)) |cond| {
+            vtable_fully_satisfied = cond;
         }
 
         if (!vtable_fully_satisfied) {
@@ -1548,6 +1550,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
             // ignore this, as we handle it elsewhere
         },
         .type_coercion => |type_coercion| {
+            try output.appendSlice("(");
             const ty = self.compiler.getNodeType(type_coercion.target_type);
             try self.codegenTypename(ty, local_inferences, output);
             try output.appendSlice(")");

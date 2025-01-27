@@ -529,16 +529,41 @@ pub fn insertVirtualMethodsOnType(self: *Compiler, type_id: Typechecker.TypeId, 
     }
 }
 
+pub fn replaceNode(self: *Compiler, node_id: Parser.NodeId, target_ty: Parser.NodeId) !Parser.NodeId {
+    const node = self.getNode(node_id);
+    const span_start = self.span_start.items[node_id];
+    const span_end = self.span_end.items[node_id];
+    var new_node_id = self.numAstNodes();
+    const new_node = Parser.AstNode{ .type_coercion = .{
+        .source_node = new_node_id,
+        .target_type = target_ty,
+    } };
+    new_node_id = try self.createNode(node, span_start, span_end);
+    if (self.var_resolution.fetchRemove(node_id)) |entry| {
+        try self.var_resolution.put(new_node_id, entry.value);
+    }
+    try self.node_types.append(Typechecker.UNKNOWN_TYPE_ID);
+    self.ast_node.items[node_id] = new_node;
+    // swapping
+    const tmp = self.node_types.items[node_id];
+    self.node_types.items[node_id] = self.node_types.items[new_node_id];
+    self.node_types.items[new_node_id] = tmp;
+    return new_node_id;
+}
+
 pub fn hasUnsatisfiedVirtualMethods(self: *Compiler, idx: Typechecker.TypeId) bool {
-    if (!(self.virtualMethodsOnType(idx).items.len == 0)) {
+    const methods = self.virtualMethodsOnType(idx);
+    if (!(methods.items.len == 0)) {
         return true;
     }
 
     const base_classes = self.base_classes.get(idx);
     if (base_classes) |classes| {
         for (classes.items) |class| {
-            if (!self.fullySatifiesVirtualMethods(idx, class)) {
-                return true;
+            if (self.fullySatifiesVirtualMethods(idx, class)) |cond| {
+                if (!cond) {
+                    return true;
+                }
             }
         }
     }
@@ -546,15 +571,19 @@ pub fn hasUnsatisfiedVirtualMethods(self: *Compiler, idx: Typechecker.TypeId) bo
     return false;
 }
 
-pub fn fullySatifiesVirtualMethods(self: *Compiler, type_id: Typechecker.TypeId, base_class: Typechecker.TypeId) bool {
+pub fn fullySatifiesVirtualMethods(self: *Compiler, type_id: Typechecker.TypeId, base_class: Typechecker.TypeId) ?bool {
     const ty_id = self.getUnderlyingTypeId(type_id);
     const base_id = self.getUnderlyingTypeId(base_class);
 
-    const virtual_methods = self.virtual_methods_on_type.get(base_id).?;
+    const virtual_methods = self.virtual_methods_on_type.get(base_id);
+    if (virtual_methods == null) {
+        return null;
+    }
+
     const methods = self.methodsOnType(ty_id);
 
     var virtual_methods_map = std.StringHashMap(Typechecker.FuncId).init(self.alloc);
-    for (virtual_methods.items) |id| {
+    for (virtual_methods.?.items) |id| {
         const node_id = self.functions.items[id].name;
         virtual_methods_map.put(self.getSource(node_id), id) catch unreachable;
     }
