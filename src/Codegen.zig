@@ -1597,16 +1597,14 @@ pub fn codegenBlock(self: *Codegen, block: Parser.NodeId, local_inferences: *std
 
                         return;
                     },
-                    else => {
-                        try self.codegenNode(node_id, local_inferences, output);
-                        try output.appendSlice(";\n");
-                    },
+                    else => {},
                 }
-
-                if (self.compiler.blocks.items[block_id].may_locally_allocate) |scope_level| {
-                    const free_str = try std.fmt.allocPrint(self.alloc, "free_allocator_level(allocator, allocation_id + {});\n", .{scope_level});
-                    try output.appendSlice(free_str);
-                }
+                try self.codegenNode(node_id, local_inferences, output);
+                try output.appendSlice(";\n");
+            }
+            if (self.compiler.blocks.items[block_id].may_locally_allocate) |scope_level| {
+                const free_str = try std.fmt.allocPrint(self.alloc, "free_allocator_level(allocator, allocation_id + {});\n", .{scope_level});
+                try output.appendSlice(free_str);
             }
         },
         else => @panic("codegen of a block that isn't a block"),

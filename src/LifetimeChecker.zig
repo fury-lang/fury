@@ -79,7 +79,7 @@ pub fn checkBlockLifetime(self: *LifetimeChecker, block_id: Parser.BlockId, scop
         }
     }
 
-    _ = self.current_blocks.pop();
+    _ = self.current_blocks.popOrNull();
 }
 
 pub fn currentBlockMayAllocate(self: *LifetimeChecker, scope_level: usize, node_id: Parser.NodeId) !void {
@@ -94,7 +94,7 @@ pub fn currentBlockMayAllocate(self: *LifetimeChecker, scope_level: usize, node_
     }
 
     try self.possible_allocation_sites.append(.{
-        .blocks = self.current_blocks,
+        .blocks = try self.current_blocks.clone(),
         .scope_level = scope_level,
         .node_id = node_id,
     });
@@ -544,8 +544,7 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
             try self.checkNodeLifetime(target, scope_level);
         },
         .@"return" => |return_expr| {
-            const current_blocks1 = self.current_blocks;
-
+            const current_blocks1 = try self.current_blocks.clone();
             try self.compiler.exiting_blocks.put(node_id, current_blocks1);
             if (return_expr) |ret_expr| {
                 try self.expandLifetime(ret_expr, ret_expr, .{ .@"return" = Parser.Void.void });
@@ -669,21 +668,20 @@ pub fn checkLifetimes(self: *LifetimeChecker) !Compiler {
     // Before we leave, go through our possible allocation sites and see
     // which local scopes allocate for themselves. If they do, mark their
     // blocks so we can properly deallocate these resources
-    // for (self.possible_allocation_sites.items) |site| {
-    //     switch (self.compiler.getNodeLifetime(site.node_id)) {
-    //         .scope => |scope| {
-    //             if (site.scope_level > scope.level) {
-    //                 // verify this
-    //                 const idx: i32 = @intCast(site.blocks.items.len - (site.scope_level - scope.level));
-    //                 if (idx >= 0) {
-    //                     const block_id = site.blocks.items[@intCast(idx)];
-    //                     self.compiler.blocks.items[block_id].may_locally_allocate = scope.level;
-    //                 }
-    //             }
-    //         },
-    //         else => {},
-    //     }
-    // }
+    for (self.possible_allocation_sites.items) |site| {
+        switch (self.compiler.getNodeLifetime(site.node_id)) {
+            .scope => |scope| {
+                if (site.scope_level >= scope.level) {
+                    const idx: i32 = @intCast(site.blocks.items.len - 1 - (site.scope_level - scope.level));
+                    if (idx >= 0 and idx < site.blocks.items.len) {
+                        const block_id = site.blocks.items[@intCast(idx)];
+                        self.compiler.blocks.items[block_id].may_locally_allocate = scope.level;
+                    }
+                }
+            },
+            else => {},
+        }
+    }
 
     return self.compiler;
 }

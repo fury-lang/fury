@@ -1,21 +1,21 @@
 ## Test cases
 
-- lifetime_inference(except cleanup_on_* ones due to issue of memory cleanup, related to lifetimechecker) ✅
+- lifetime_inference ✅
 - owned_abstraction ✅
 - math ✅
 - hello_world ✅
-- raw_buffers(except raw_buffer_defer.pn same issue as with lifetime cleanup_on_*) ✅
+- raw_buffers ✅
 - parsing ✅
 - data_types ✅
 - control_flow ✅
 - variables ✅
 - typechecking ✅
-- defer(expect defer_simple.pn same issue, related to memory cleanup) ✅
+- defer ✅
 - enums ✅
 - structs ✅
 - data_structrues ✅
-- extern_c(same memory issue with file_io_abstraction.pn and file_ptr.defer.pn) ✅
+- extern_c ✅
 - classes ✅
-- first_class_functions(except first_class_function_allocation*.pn, related to memory cleanup) ✅
+- first_class_functions ✅
 - generics
 - modules
