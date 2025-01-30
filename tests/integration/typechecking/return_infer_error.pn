@@ -1,3 +1,5 @@
+// error: can't find compatible lifetime between param 'a' and return
+
 struct Stats {
     age: i64
 }

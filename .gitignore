@@ -2,4 +2,7 @@
 zig-out/
 output.c
 output
+test.c
+test
+.vscode/
 .DS_Store
