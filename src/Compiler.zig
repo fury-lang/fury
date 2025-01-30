@@ -633,8 +633,32 @@ pub fn isGenericType(self: *Compiler, type_id: Typechecker.TypeId, list: std.Arr
                 return try self.isGenericType(f.ret, try seen.clone());
             }
         },
-        else => {
-            @panic("unimplemented");
+        .pointer => |pt| return try self.isGenericType(pt.target, try seen.clone()),
+        .@"struct" => |s| {
+            if (!(s.generic_params.items.len == 0)) return true;
+            for (s.fields.items) |field| {
+                if (try self.isGenericType(field.ty, try seen.clone())) {
+                    return true;
+                }
+            }
+            return false;
+        },
+        .@"enum" => |e| {
+            if (!(e.generic_params.items.len == 0)) return true;
+            for (e.variants.items) |item| {
+                switch (item) {
+                    .simple => return false,
+                    .single => |single| return try self.isGenericType(single.param, try seen.clone()),
+                    .@"struct" => |st| {
+                        for (st.params.items) |p| {
+                            if (try self.isGenericType(p.ty, try seen.clone())) {
+                                return true;
+                            }
+                        }
+                    },
+                }
+            }
+            return false;
         },
     }
 

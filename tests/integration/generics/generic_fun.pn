@@ -5,3 +5,4 @@ fun id<T>(x: T) [x == return] -> T  {
 }
 
 println(id(123))
+println(id(c'a'))

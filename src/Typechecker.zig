@@ -298,8 +298,15 @@ pub fn unifyTypes(self: *Typechecker, lhs: TypeId, rhs: TypeId, local_inferences
         // Also, if an owned pointer is assigned to a shared pointer, then we'll
         // allow the move into a shared pointer, effectively removing the owned-ness.
         // We can do this because the ownership will move.
-        return (lhs_ty.pointer.pointer_type == Parser.PointerType.Unknown or (lhs_ty.pointer.pointer_type == rhs_ty.pointer.pointer_type) or (lhs_ty.pointer.pointer_type == Parser.PointerType.Shared and
-            rhs_ty.pointer.pointer_type == Parser.PointerType.Owned)) and lhs_ty.pointer.target == rhs_ty.pointer.target and (lhs_ty.pointer.optional == rhs_ty.pointer.optional or lhs_ty.pointer.optional);
+        // zig fmt: off
+        return (lhs_ty.pointer.pointer_type == Parser.PointerType.Unknown 
+        or lhs_ty.pointer.pointer_type == rhs_ty.pointer.pointer_type 
+        or (lhs_ty.pointer.pointer_type == Parser.PointerType.Shared
+        and rhs_ty.pointer.pointer_type == Parser.PointerType.Owned))
+        // TODO generics not working properly if we use logical and here
+        or lhs_ty.pointer.target == rhs_ty.pointer.target
+        and (lhs_ty.pointer.optional or lhs_ty.pointer.optional == rhs_ty.pointer.optional);
+        // zig fmt: on
     } else if (std.mem.eql(u8, @tagName(lhs_ty), "raw_buffer") and std.mem.eql(u8, @tagName(rhs_ty), "raw_buffer")) {
         const lhs_inner = lhs_ty.raw_buffer;
         const rhs_inner = rhs_ty.raw_buffer;
@@ -2119,7 +2126,7 @@ pub fn typecheckNew(self: *Typechecker, pointer_type: Parser.PointerType, node_i
             if (!(replacements.count() == 0)) {
                 const generic_ty_id = try self.instantiateGenericType(type_id.?, &replacements);
 
-                _ = try self.compiler.findOrCreateType(.{ .pointer = .{
+                return try self.compiler.findOrCreateType(.{ .pointer = .{
                     .pointer_type = pointer_type,
                     .optional = false,
                     .target = generic_ty_id,
@@ -2590,7 +2597,9 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
                         bin_op.*.right = bin_op.*.right + offset;
                     },
                     .block => |*block_id| {
-                        const block0 = self.compiler.blocks.items[block_id.*];
+                        const may_allocate = self.compiler.blocks.items[block_id.*].may_locally_allocate;
+                        const node_list = try self.compiler.blocks.items[block_id.*].nodes.clone();
+                        const block0 = Parser.Block{ .nodes = node_list, .may_locally_allocate = may_allocate };
                         for (block0.nodes.items) |*node| {
                             node.* = node.* + offset;
                         }
@@ -2657,7 +2666,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
                     .let => |*let_stmt| {
                         let_stmt.*.variable_name = let_stmt.*.variable_name + offset;
                         if (let_stmt.*.ty) |*ty| {
-                            ty.* = ty.* + offset;
+                            let_stmt.*.ty = ty.* + offset;
                         }
                         let_stmt.*.initializer = let_stmt.*.initializer + offset;
                     },
@@ -2705,7 +2714,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
                     },
                     .@"return" => |*ret| {
                         if (ret.*) |_| {
-                            ret.*.? = ret.*.? + offset;
+                            ret.* = ret.*.? + offset;
                         }
                     },
                     .statement => |*stmt| {
@@ -2714,7 +2723,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
                     .type => |*ty| {
                         ty.*.name = ty.*.name + offset;
                         if (ty.*.params) |_| {
-                            ty.*.params.? = ty.*.params.? + offset;
+                            ty.*.params = ty.*.params.? + offset;
                         }
                     },
                     .unsafe_block => |*ub| {

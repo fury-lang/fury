@@ -64,7 +64,7 @@ pub fn codegenTypename(self: *Codegen, type_id: Typechecker.TypeId, local_infere
             } else if (type_id == Typechecker.C_SIZE_T_TYPE_ID) {
                 try output.appendSlice("size_t");
             } else if (type_id == Typechecker.C_CHAR_TYPE_ID) {
-                try output.appendSlice("char");
+                try output.appendSlice("char ");
             } else if (type_id == Typechecker.BOOL_TYPE_ID) {
                 // check why we got error without the extra space
                 try output.appendSlice("bool ");

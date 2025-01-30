@@ -45,8 +45,7 @@ test "Tests coverage" {
 
         // generics and imports are not supported yet
         // zig fmt: off
-        if (std.mem.startsWith(u8, entry.path, "integration/generics") or 
-        std.mem.startsWith(u8, entry.path, "integration/modules") 
+        if (std.mem.startsWith(u8, entry.path, "integration/modules") 
         or std.mem.startsWith(u8, entry.path, "integration/jason")) {
             std.debug.print("{s}: 🚧Skip\n", .{file_path});
             skip += 1;
