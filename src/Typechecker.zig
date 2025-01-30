@@ -526,9 +526,9 @@ pub fn typecheckCallWithFunId(self: *Typechecker, name: Parser.NodeId, fun_id: F
     var type_var_replacements = std.AutoHashMap(TypeId, TypeId).init(self.alloc);
     try self.typecheckCallHelper(&_args, params, method_target, local_inferences, &type_var_replacements);
 
-    const _fun_id = fun_id;
+    var _fun_id = fun_id;
     if (!(type_var_replacements.count() == 0)) {
-        // TODO generic fun
+        _fun_id = try self.instantiateGenericFun(fun_id, &type_var_replacements);
     }
 
     // TODO do we want to wait until all params are checked
@@ -675,14 +675,26 @@ pub fn typecheckCall(self: *Typechecker, node_id: Parser.NodeId, head: Parser.No
 pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params: ?Parser.NodeId, params: Parser.NodeId, lifetime_annotations: *std.ArrayList(Parser.NodeId), return_ty: ?Parser.NodeId, initial_node_id: ?Parser.NodeId, block: ?Parser.NodeId, is_extern: bool) !FuncId {
     var fun_params = std.ArrayList(Param).init(self.alloc);
     var fun_type_params = std.ArrayList(TypeParam).init(self.alloc);
-    _ = &fun_type_params;
 
     const fun_name = self.compiler.source[self.compiler.span_start.items[name]..self.compiler.span_end.items[name]];
 
     try self.enterScope();
 
-    // TODO generic type params
-    if (type_params) |_| {}
+    if (type_params) |ty_params| {
+        const _ty_params = self.compiler.getNode(ty_params);
+        if (!std.mem.eql(u8, @tagName(_ty_params), "params")) {
+            @panic("internal error: enum generic params are not proper ast node");
+        }
+
+        const new_ty_params = try _ty_params.params.clone();
+        for (new_ty_params.items) |ty_param| {
+            const new_ty_id = try self.compiler.freshTypeVariable(ty_param);
+            const type_var_name = self.compiler.getSource(ty_param);
+
+            try fun_type_params.append(TypeParam.new(type_var_name, new_ty_id));
+            try self.addTypeToScope(type_var_name, new_ty_id);
+        }
+    }
 
     const _params = self.compiler.getNode(params);
     switch (_params) {
@@ -2105,7 +2117,13 @@ pub fn typecheckNew(self: *Typechecker, pointer_type: Parser.PointerType, node_i
             }
 
             if (!(replacements.count() == 0)) {
-                // TODO initiate generic types
+                const generic_ty_id = try self.instantiateGenericType(type_id.?, &replacements);
+
+                _ = try self.compiler.findOrCreateType(.{ .pointer = .{
+                    .pointer_type = pointer_type,
+                    .optional = false,
+                    .target = generic_ty_id,
+                } });
             } else {
                 return output_type;
             }
@@ -2178,7 +2196,7 @@ pub fn typecheckNamespacedTypeLookup(self: *Typechecker, namespace: Parser.NodeI
                                                 self.compiler.getUnderlyingTypeId(arg_type_id),
                                             );
 
-                                            // TODO initiate generic types
+                                            type_id.* = try self.instantiateGenericType(type_id.*, &replacements);
                                         } else if (!self.unifyTypes(param, arg_type_id, local_inferences)) {
                                             try self.@"error"("incompatible type for enum case", args.items[0]);
                                             return VOID_TYPE_ID;
@@ -2240,7 +2258,10 @@ pub fn typecheckNamespacedTypeLookup(self: *Typechecker, namespace: Parser.NodeI
                                             }
                                         }
 
-                                        // TODO initiate generic types
+                                        // instantiate, if we have replacements available
+                                        if (!(replacements.count() == 0)) {
+                                            type_id.* = try self.instantiateGenericType(type_id.*, &replacements);
+                                        }
 
                                         try self.compiler.call_resolution.put(head, Compiler.CallTarget{ .enum_constructor = .{
                                             .type_id = type_id.*,
@@ -2505,7 +2526,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
     const fun = self.compiler.functions.items[fun_id];
 
     const _name = fun.name;
-    const params = fun.params;
+    const params = try fun.params.clone();
     const new_params = try params.clone();
     const lifetime_annotations = try fun.lifetime_annotations.clone();
     const type_params = std.ArrayList(TypeParam).init(self.alloc);
@@ -2516,32 +2537,32 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
     var _body = fun.body;
     const is_extern = fun.is_extern;
 
-    for (new_params.items) |new_param| {
-        var new_var = self.compiler.getVariable(new_param.var_id);
+    for (new_params.items) |*new_param| {
+        var new_var = self.compiler.getVariable(new_param.*.var_id);
         new_var.ty = try self.instantiateGenericType(new_var.ty, replacements);
         try self.compiler.variables.append(new_var);
-        new_param.var_id = self.compiler.variables.items.len - 1;
+        new_param.*.var_id = self.compiler.variables.items.len - 1;
     }
 
-    for (lifetime_annotations.items) |lifetime_annotation| {
-        switch (lifetime_annotation) {
-            .equality => |equality| {
-                switch (equality.lhs) {
+    for (lifetime_annotations.items) |*lifetime_annotation| {
+        switch (lifetime_annotation.*) {
+            .equality => |*equality| {
+                switch (equality.*.left) {
                     .variable => |*v_id| {
                         for (params.items, 0..) |param, idx| {
                             const new_param = new_params.items[idx];
-                            if (v_id == param.var_id) {
+                            if (v_id.* == param.var_id) {
                                 v_id.* = new_param.var_id;
                             }
                         }
                     },
                     else => {},
                 }
-                switch (equality.rhs) {
-                    .variable => |v_id| {
+                switch (equality.*.right) {
+                    .variable => |*v_id| {
                         for (params.items, 0..) |param, idx| {
                             const new_param = new_params.items[idx];
-                            if (v_id == param.var_id) {
+                            if (v_id.* == param.var_id) {
                                 v_id.* = new_param.var_id;
                             }
                         }
@@ -2592,7 +2613,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
                             c.* = c.* + offset;
                         }
 
-                        for (e.*.methods) |*method| {
+                        for (e.*.methods.items) |*method| {
                             method.* = method.* + offset;
                         }
                     },
@@ -2642,7 +2663,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
                     },
                     .match => |*match| {
                         match.*.target = match.*.target + offset;
-                        for (match.*.match_arms) |*m| {
+                        for (match.*.match_arms.items) |*m| {
                             m.*[0] = m.*[0] + offset;
                             m.*[1] = m.*[1] + offset;
                         }
@@ -2683,7 +2704,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
                         buffer.*.new_size = buffer.*.new_size + offset;
                     },
                     .@"return" => |*ret| {
-                        if (ret.*.?) |_| {
+                        if (ret.*) |_| {
                             ret.*.? = ret.*.? + offset;
                         }
                     },
@@ -2692,7 +2713,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
                     },
                     .type => |*ty| {
                         ty.*.name = ty.*.name + offset;
-                        if (ty.params) |_| {
+                        if (ty.*.params) |_| {
                             ty.*.params.? = ty.*.params.? + offset;
                         }
                     },
@@ -2709,7 +2730,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
                     else => {},
                 }
 
-                try self.compiler.pushNode(ast_node);
+                _ = try self.compiler.pushNode(ast_node);
                 try self.compiler.span_start.append(self.compiler.span_start.items[raw_node_id]);
                 try self.compiler.span_end.append(self.compiler.span_end.items[raw_node_id]);
             }
@@ -2744,7 +2765,7 @@ pub fn instantiateGenericType(self: *Typechecker, type_id: TypeId, replacements:
         .@"enum" => |e| {
             var new_variants = std.ArrayList(EnumVariant).init(self.alloc);
             const methods = self.compiler.methodsOnType(type_id);
-            const new_methods = std.ArrayList(FuncId).init(self.alloc);
+            var new_methods = std.ArrayList(FuncId).init(self.alloc);
 
             variant_label: for (e.variants.items) |variant| {
                 switch (variant) {
@@ -2784,7 +2805,7 @@ pub fn instantiateGenericType(self: *Typechecker, type_id: TypeId, replacements:
             const new_type_id = try self.compiler.findOrCreateType(Type{
                 .@"enum" = .{
                     // check type of params
-                    .generic_params = std.ArrayList(TypeId).init(self.alloc),
+                    .generic_params = std.ArrayList(TypeId).init(self.alloc), // we're now fully instantiated
                     .variants = new_variants,
                 },
             });

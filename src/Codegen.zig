@@ -1619,11 +1619,17 @@ pub fn codegenFunDecls(self: *Codegen, output: *std.ArrayList(u8)) !void {
         const return_type = fun.return_type;
         const body = fun.body;
 
-        // TODO generics
         var has_generics_in_signature = false;
         if (type_params.items.len > 0) {
             has_generics_in_signature = true;
         }
+
+        for (params.items) |param| {
+            const variable = self.compiler.getVariable(param.var_id);
+            has_generics_in_signature = has_generics_in_signature or try self.compiler.isGenericType(variable.ty, std.ArrayList(Typechecker.VarId).init(self.alloc));
+        }
+
+        has_generics_in_signature = has_generics_in_signature or try self.compiler.isGenericType(return_type, std.ArrayList(Typechecker.VarId).init(self.alloc));
 
         if (!has_generics_in_signature) {
             try self.codegenFunSignature(idx, &params, return_type, output, (body == null));
@@ -1641,11 +1647,17 @@ pub fn codegenFunDecls(self: *Codegen, output: *std.ArrayList(u8)) !void {
         const body = fun.body;
         var inference_vars = fun.inference_vars;
 
-        // TODO generics
         var has_generics_in_signature = false;
         if (type_params.items.len > 0) {
             has_generics_in_signature = true;
         }
+
+        for (params.items) |param| {
+            const variable = self.compiler.getVariable(param.var_id);
+            has_generics_in_signature = has_generics_in_signature or try self.compiler.isGenericType(variable.ty, std.ArrayList(Typechecker.VarId).init(self.alloc));
+        }
+
+        has_generics_in_signature = has_generics_in_signature or try self.compiler.isGenericType(return_type, std.ArrayList(Typechecker.VarId).init(self.alloc));
 
         if (!has_generics_in_signature) {
             if (body) |b| {

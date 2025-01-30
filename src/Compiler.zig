@@ -607,6 +607,40 @@ pub fn fullySatifiesVirtualMethods(self: *Compiler, type_id: Typechecker.TypeId,
     return true;
 }
 
+pub fn isGenericType(self: *Compiler, type_id: Typechecker.TypeId, list: std.ArrayList(Typechecker.TypeId)) !bool {
+    // The `seen` parameter is used to protect the recursion from going infinite. Once we see a type,
+    // before we destructure it, we log that we have seen it so we do not check it again.
+    var seen = try list.clone();
+    for (seen.items) |item| {
+        if (item == type_id) {
+            return false;
+        }
+    }
+
+    try seen.append(type_id);
+
+    switch (self.getType(type_id)) {
+        .bool, .c_char, .c_external_type, .c_string, .c_void_ptr, .void, .i64, .f64, .c_int, .c_size_t => return false,
+        .type_variable, .fun_local_type_val, .unknown => return true,
+        .range => |x| return try self.isGenericType(x, try seen.clone()),
+        .raw_buffer => |x| return try self.isGenericType(x, try seen.clone()),
+        .fun => |f| {
+            for (f.params.items) |x| {
+                const variable = self.getVariable(x.var_id);
+                if (try self.isGenericType(variable.ty, try seen.clone())) {
+                    return true;
+                }
+                return try self.isGenericType(f.ret, try seen.clone());
+            }
+        },
+        else => {
+            @panic("unimplemented");
+        },
+    }
+
+    unreachable;
+}
+
 pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
     switch (self.getType(type_id)) {
         .bool => return "bool",
