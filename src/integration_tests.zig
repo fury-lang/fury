@@ -43,18 +43,15 @@ test "Tests coverage" {
         const file_path = try std.fmt.allocPrint(alloc, "tests/{s}", .{entry.path});
         const path_len = file_path.len;
 
-        // generics and imports are not supported yet
-        // zig fmt: off
-        if (std.mem.startsWith(u8, entry.path, "integration/modules") 
-        or std.mem.startsWith(u8, entry.path, "integration/jason")) {
-            std.debug.print("{s}: 🚧Skip\n", .{file_path});
-            skip += 1;
+        if (!std.mem.eql(u8, file_path[(path_len - 2)..path_len], "pn")) {
+            total -= 1;
             continue;
         }
-        // zig fmt: on
 
-        if (!std.mem.eql(u8, file_path[(path_len - 2)..path_len], "pn")) {
-            pass += 1;
+        // imports are not supported yet
+        if (std.mem.startsWith(u8, entry.path, "integration/modules")) {
+            std.debug.print("{s}: 🚧Skip\n", .{file_path});
+            skip += 1;
             continue;
         }
 

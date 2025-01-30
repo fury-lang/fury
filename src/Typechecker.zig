@@ -1318,7 +1318,10 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
 
             node_type = type_id;
         },
-        .string => @panic("strings not yet supported"),
+        .string => {
+            try self.@"error"("strings not yet supported", node_id);
+            node_type = UNKNOWN_TYPE_ID;
+        },
         .c_char => node_type = C_CHAR_TYPE_ID,
         .c_string => node_type = C_STRING_TYPE_ID,
         .let => |let_stmt| {

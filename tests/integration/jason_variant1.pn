@@ -1,3 +1,5 @@
+// error: function is missing expected return at end of function
+
 struct Stats {
     age: i64
 }

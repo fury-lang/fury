@@ -1,3 +1,5 @@
+// error: strings not yet supported
+
 struct Stats {
     age: i64
 }
