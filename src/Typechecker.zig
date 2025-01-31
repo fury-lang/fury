@@ -161,6 +161,14 @@ pub const Scope = struct {
         };
     }
 
+    pub fn deinit(self: *Scope) void {
+        self.modules.deinit();
+        self.functions.deinit();
+        self.types.deinit();
+        self.functions.deinit();
+        self.move_owned_values.deinit();
+    }
+
     pub fn setUnsafe(self: *Scope) void {
         self.allow_unsafe = true;
     }
@@ -260,6 +268,12 @@ pub fn new(alloc: std.mem.Allocator, compiler: Compiler) !Typechecker {
     typechecker.scope = scope;
 
     return typechecker;
+}
+
+pub fn deinit(self: *Typechecker) void {
+    for (self.scope.items) |scope| {
+        scope.deinit();
+    }
 }
 
 pub fn unsafeAllowed(self: *Typechecker) bool {

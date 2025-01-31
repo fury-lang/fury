@@ -30,48 +30,51 @@ pub fn main() !void {
     try compiler.addFile(file_name);
 
     var parser = Parser.new(alloc, compiler, span_offset);
-    var c = try parser.parse();
+    compiler = try parser.parse();
 
     // if (c.errors.items.len == 0) c.print();
 
-    for (c.errors.items) |*err| {
-        try c.printErrors(err);
+    for (compiler.errors.items) |*err| {
+        try compiler.printErrors(err);
         // std.debug.print("err: {s}\n", .{err.*.message});
     }
 
-    if (c.errors.items.len != 0) return;
+    if (compiler.errors.items.len != 0) return;
 
-    var typechecker = try Typechecker.new(alloc, c);
-    var c_new = try typechecker.typecheck();
-    // if (c_new.errors.items.len == 0) c_new.print();
+    var typechecker = try Typechecker.new(alloc, compiler);
+    defer typechecker.deinit();
+    compiler = try typechecker.typecheck();
+    // if (compiler.errors.items.len == 0) compiler.print();
 
-    for (c_new.errors.items) |*err| {
-        try c_new.printErrors(err);
+    for (compiler.errors.items) |*err| {
+        try compiler.printErrors(err);
     }
 
-    if (c_new.errors.items.len != 0) return;
+    if (compiler.errors.items.len != 0) return;
 
-    var lifetime_checker = try LifetimeChecker.new(alloc, c_new);
-    c_new = try lifetime_checker.checkLifetimes();
+    var lifetime_checker = try LifetimeChecker.new(alloc, compiler);
+    defer lifetime_checker.deinit();
+    compiler = try lifetime_checker.checkLifetimes();
 
-    // if (c_new.errors.items.len == 0) c_new.print();
+    // if (compiler.errors.items.len == 0) compiler.print();
 
-    for (c_new.errors.items) |*err| {
-        try c_new.printErrors(err);
+    for (compiler.errors.items) |*err| {
+        try compiler.printErrors(err);
     }
 
-    if (c_new.errors.items.len != 0) return;
+    if (compiler.errors.items.len != 0) return;
 
-    var codegen = try Codegen.new(alloc, c_new);
+    var codegen = try Codegen.new(alloc, compiler);
+    defer compiler.deinit();
     const output = try codegen.codegen();
 
-    if (c_new.errors.items.len == 0) c_new.print();
+    if (compiler.errors.items.len == 0) compiler.print();
 
-    for (c_new.errors.items) |*err| {
-        try c_new.printErrors(err);
+    for (compiler.errors.items) |*err| {
+        try compiler.printErrors(err);
     }
 
-    if (c_new.errors.items.len != 0) return;
+    if (compiler.errors.items.len != 0) return;
 
     var output_file = try std.fs.cwd().createFile("output.c", .{});
     defer output_file.close();

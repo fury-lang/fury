@@ -979,6 +979,7 @@ pub fn expression(self: *Parser) !NodeId {
 
 pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
     var expr_stack = std.ArrayList(NodeId).init(self.alloc);
+    defer expr_stack.deinit();
     var last_prec: usize = 1000000;
     const span_start = self.position();
 
@@ -2759,28 +2760,29 @@ fn isAsciiHexDigit(c: u8) bool {
     return isAsciiDigit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
 }
 
-// test "Parser quick test" {
-//     const alloc = std.heap.page_allocator;
+test "Parser quick test" {
+    const alloc = std.heap.page_allocator;
 
-//     const file_name: []const u8 = "tests/integration/variables/variable_mutation.fury";
+    const file_name: []const u8 = "tests/integration/variables/variable_mutation.fury";
 
-//     const file = try std.fs.cwd().openFile(file_name, .{});
-//     defer file.close();
+    const file = try std.fs.cwd().openFile(file_name, .{});
+    defer file.close();
 
-//     const file_size = try file.getEndPos();
-//     const source = try alloc.alloc(u8, file_size);
-//     _ = try file.read(source);
+    const file_size = try file.getEndPos();
+    const source = try alloc.alloc(u8, file_size);
+    _ = try file.read(source);
 
-//     var compiler = Compiler.new(alloc);
-//     const span_offset = compiler.spanOffset();
-//     try compiler.addFile(file_name);
+    var compiler = Compiler.new(alloc);
+    const span_offset = compiler.spanOffset();
+    try compiler.addFile(file_name);
 
-//     var parser = Parser.new(alloc, compiler, span_offset);
-//     var c = try parser.parse();
+    var parser = Parser.new(alloc, compiler, span_offset);
+    defer compiler.deinit();
+    var c = try parser.parse();
 
-//     // if (c.errors.items.len == 0) c.print();
+    // if (c.errors.items.len == 0) c.print();
 
-//     for (c.errors.items) |*err| {
-//         try c.printErrors(err);
-//     }
-// }
+    for (c.errors.items) |*err| {
+        try c.printErrors(err);
+    }
+}

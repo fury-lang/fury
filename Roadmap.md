@@ -2,3 +2,6 @@
 - Formatter
 - Editor support
 - Better errors
+- Package manager
+- Docs generator
+- LLVM backend

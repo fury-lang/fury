@@ -106,6 +106,120 @@ pub fn new(alloc: std.mem.Allocator) Compiler {
     };
 }
 
+pub fn deinit(self: *Compiler) void {
+    self.span_start.deinit();
+    self.span_end.deinit();
+
+    for (self.ast_node.items) |node| {
+        switch (node) {
+            .fun_type => |fun_type| fun_type.params.deinit(),
+            .fun => |fun| fun.lifetime_annotations.deinit(),
+            .params => |params| params.deinit(),
+            .@"struct" => |s| {
+                s.fields.deinit();
+                s.methods.deinit();
+            },
+            .@"enum" => |e| {
+                e.cases.deinit();
+                e.methods.deinit();
+            },
+            .enum_case => |e_case| {
+                if (e_case.payload) |payload| {
+                    payload.deinit();
+                }
+            },
+            .call => |call| call.args.deinit(),
+            .match => |match| match.match_arms.deinit(),
+            .raw_buffer => |buffer| buffer.deinit(),
+            else => {},
+        }
+    }
+    self.ast_node.deinit();
+
+    self.node_types.deinit();
+    self.node_lifetimes.deinit();
+
+    for (self.blocks.items) |block| {
+        block.nodes.deinit();
+    }
+    self.blocks.deinit();
+
+    self.file_offsets.deinit();
+    self.variables.deinit();
+
+    for (self.functions.items) |fun| {
+        fun.params.deinit();
+        fun.lifetime_annotations.deinit();
+        fun.type_params.deinit();
+        fun.inference_vars.deinit();
+    }
+    self.functions.deinit();
+
+    for (self.types.items) |ty| {
+        switch (ty) {
+            .fun => |f| f.params.deinit(),
+            .@"struct" => |s| {
+                s.generic_params.deinit();
+                s.fields.deinit();
+            },
+            .@"enum" => |e| {
+                e.generic_params.deinit();
+                for (e.variants.items) |variant| {
+                    switch (variant) {
+                        .@"struct" => |var_st| var_st.params.deinit(),
+                        else => {},
+                    }
+                }
+                e.variants.deinit();
+            },
+            else => {},
+        }
+    }
+    self.types.deinit();
+
+    for (self.modules.items) |*module| {
+        module.scope.deinit();
+    }
+    self.modules.deinit();
+
+    self.module_lookup.deinit();
+    self.module_lookup_use.deinit();
+
+    var exiting_iter = self.exiting_blocks.iterator();
+    while (exiting_iter.next()) |exit_entry| {
+        exit_entry.value_ptr.*.deinit();
+    }
+    self.exiting_blocks.deinit();
+
+    var method_iter = self.methods_on_type.iterator();
+    while (method_iter.next()) |method_entry| {
+        method_entry.value_ptr.*.deinit();
+    }
+    self.methods_on_type.deinit();
+
+    var virtual_iter = self.virtual_methods_on_type.iterator();
+    while (virtual_iter.next()) |virtual_entry| {
+        virtual_entry.value_ptr.*.deinit();
+    }
+    self.virtual_methods_on_type.deinit();
+
+    self.call_resolution.deinit();
+    self.var_resolution.deinit();
+    self.fun_resolution.deinit();
+    self.type_resolution.deinit();
+    self.module_resolution.deinit();
+    var base_classes_iter = self.base_classes.iterator();
+    while (base_classes_iter.next()) |class_entry| {
+        class_entry.value_ptr.*.deinit();
+    }
+    self.base_classes.deinit();
+    // TODO check for allocated slices as well
+    for (self.errors.items) |err| {
+        _ = err;
+    }
+    self.errors.deinit();
+}
+
 pub fn printLifetime(self: *Compiler, node_id: usize) void {
     switch (self.node_lifetimes.items[node_id]) {
         .@"return" => std.debug.print("return", .{}),

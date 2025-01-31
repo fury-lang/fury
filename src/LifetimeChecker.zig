@@ -39,6 +39,15 @@ pub fn new(alloc: std.mem.Allocator, compiler: Compiler) !LifetimeChecker {
     };
 }
 
+pub fn deinit(self: *LifetimeChecker) void {
+    self.current_blocks.deinit();
+    for (self.possible_allocation_sites.items) |site| {
+        site.blocks.deinit();
+    }
+    self.possible_allocation_sites.deinit();
+    self.num_lifetime_inferences.deinit();
+}
+
 pub fn @"error"(self: *LifetimeChecker, message: []const u8, node_id: Parser.NodeId) !void {
     try self.compiler.errors.append(Errors.SourceError{
         .message = message,
