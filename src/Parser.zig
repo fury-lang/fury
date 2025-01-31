@@ -1785,7 +1785,7 @@ pub fn useStatement(self: *Parser) !NodeId {
 
     const use_statement = try self.createNode(.{ .use = .{ .path = path } }, span_start, span_end);
     const fname_path = self.compiler.getSource(path);
-    const fname = try std.fmt.allocPrint(self.alloc, "tests/integration/modules/{s}.pn", .{fname_path});
+    const fname = try std.fmt.allocPrint(self.alloc, "tests/integration/modules/{s}.fury", .{fname_path});
 
     if (self.compiler.module_lookup.get(fname)) |_block| {
         try self.compiler.module_lookup_use.put(path, _block);
@@ -2762,7 +2762,7 @@ fn isAsciiHexDigit(c: u8) bool {
 // test "Parser quick test" {
 //     const alloc = std.heap.page_allocator;
 
-//     const file_name: []const u8 = "tests/integration/variables/variable_mutation.pn";
+//     const file_name: []const u8 = "tests/integration/variables/variable_mutation.fury";
 
 //     const file = try std.fs.cwd().openFile(file_name, .{});
 //     defer file.close();

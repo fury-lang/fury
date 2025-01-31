@@ -3194,7 +3194,7 @@ pub fn findModuleInScope(self: *Typechecker, namespace: Parser.NodeId) ?ModuleId
         while (module_iter.next()) |module_entry| {
             // definitely incorrect, but we currently only have one path segment
             // this needs to somehow be able to resolve the path against all the segments of the path
-            const simple_path = module_entry.key_ptr.*[0 .. module_entry.key_ptr.len - 3];
+            const simple_path = module_entry.key_ptr.*[0 .. module_entry.key_ptr.len - 5];
             var path_copy: []const u8 = std.fmt.allocPrint(self.alloc, "{s}", .{simple_path}) catch unreachable;
             std.mem.reverse(u8, @constCast(path_copy));
             var split_item = std.mem.split(u8, path_copy, "/");

@@ -43,7 +43,7 @@ test "Tests coverage" {
         const file_path = try std.fmt.allocPrint(alloc, "tests/{s}", .{entry.path});
         const path_len = file_path.len;
 
-        if (!std.mem.eql(u8, file_path[(path_len - 2)..path_len], "pn")) {
+        if (!std.mem.eql(u8, file_path[(path_len - 4)..path_len], "fury")) {
             total -= 1;
             continue;
         }
