@@ -1217,7 +1217,7 @@ pub fn maybeMoveVariable(self: *Typechecker, node_id: Parser.NodeId, local_infer
     }
 }
 
-pub fn typecheckBlock(self: *Typechecker, node_id: Parser.NodeId, block_id: Parser.BlockId, local_inferences: *std.ArrayList(TypeId)) !Scope {
+pub fn typecheckBlock(self: *Typechecker, node_id: Parser.NodeId, block_id: Parser.BlockId, local_inferences: *std.ArrayList(TypeId)) anyerror!Scope {
     var funs = std.ArrayList(FuncId).init(self.alloc);
 
     try self.enterScope();
@@ -1268,6 +1268,9 @@ pub fn typecheckBlock(self: *Typechecker, node_id: Parser.NodeId, block_id: Pars
                 const type_id = try self.compiler.findOrCreateType(ty);
 
                 try self.addTypeToScope(type_name, type_id);
+            },
+            .use => |use_expr| {
+                _ = try self.typecheckModule(use_expr.path, local_inferences);
             },
             else => {},
         }
@@ -1602,6 +1605,9 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
         },
         .namespaced_lookup => |namespaced_lookup| {
             node_type = try self.typecheckNamespacedLookup(namespaced_lookup.namespace, namespaced_lookup.item, local_inferences);
+        },
+        .use => |use_expr| {
+            node_type = try self.typecheckModule(use_expr.path, local_inferences);
         },
         .match => |match| {
             node_type = try self.typecheckMatch(match.target, match.match_arms, local_inferences);
@@ -2147,12 +2153,36 @@ pub fn typecheckNew(self: *Typechecker, pointer_type: Parser.PointerType, node_i
 }
 
 pub fn typecheckNamespacedLookup(self: *Typechecker, namespace: Parser.NodeId, item: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
-    // TODO check for module imports
     if (self.findTypeInScope(namespace)) |type_id| {
         return try self.typecheckNamespacedTypeLookup(namespace, @constCast(&type_id), item, local_inferences);
+    } else if (self.findModuleInScope(namespace)) |module_id| {
+        return try self.typecheckNamespacedItemLookup(namespace, module_id, item, local_inferences);
     } else {
         try self.@"error"("could not find namespace", namespace);
         return VOID_TYPE_ID;
+    }
+}
+
+// enter the module's scope then recurse and call typecheck_namespaced_lookup?
+pub fn typecheckNamespacedItemLookup(self: *Typechecker, namespace: Parser.NodeId, module: ModuleId, item: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
+    const mods = self.compiler.modules.items[module];
+    const node = self.compiler.getNode(item);
+
+    switch (node) {
+        .call => |call_expr| {
+            const _name = self.compiler.getSource(call_expr.head);
+            const fun_id = @constCast(&mods).scope.findFunction(_name);
+            if (fun_id) |f_id| {
+                return try self.typecheckCallWithFunId(call_expr.head, f_id, @constCast(&call_expr.args), null, local_inferences);
+            } else {
+                try self.@"error"("could not find item in namespace", namespace);
+                return VOID_TYPE_ID;
+            }
+        },
+        else => {
+            try self.@"error"("could not find item in namespace", namespace);
+            return VOID_TYPE_ID;
+        },
     }
 }
 
@@ -2927,6 +2957,37 @@ pub fn typecheckVarOrFunction(self: *Typechecker, node_id: Parser.NodeId, var_or
     }
 }
 
+pub fn typecheckModule(self: *Typechecker, path: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
+    var _block: Parser.NodeId = undefined;
+    if (self.compiler.module_lookup_use.get(path)) |b| {
+        _block = b;
+    } else {
+        @panic("all paths should have valid module blocks associated with them");
+    }
+
+    if (self.compiler.module_resolution.contains(_block)) {
+        return VOID_TYPE_ID;
+    } else {
+        const block_id = self.compiler.getNode(_block);
+        switch (block_id) {
+            .block => |b_id| {
+                const scope = try self.typecheckBlock(_block, b_id, local_inferences);
+                const module = Module{ .scope = scope };
+                const module_id = try self.compiler.addModule(_block, module);
+                // for now it's just a simple identifer(ex: use utils)
+                const file_path = self.compiler.getSourcePath(_block);
+                try self.addModuleToScope(file_path, module_id);
+                return VOID_TYPE_ID;
+            },
+            else => {
+                @panic("module block node ids should always refer to a valid Block in the ast");
+            },
+        }
+    }
+
+    unreachable;
+}
+
 pub fn typecheck(self: *Typechecker) !Compiler {
     const num_nodes = self.compiler.ast_node.items.len;
     try self.compiler.resizeNodeTypes(num_nodes, UNKNOWN_TYPE_ID);
@@ -3122,6 +3183,30 @@ pub fn endsInReturn(self: *Typechecker, node_id: Parser.NodeId) bool {
         },
         else => return false,
     }
+}
+
+pub fn findModuleInScope(self: *Typechecker, namespace: Parser.NodeId) ?ModuleId {
+    const name = self.compiler.getSource(namespace);
+
+    var i: i32 = @intCast(self.scope.items.len - 1);
+    while (i >= 0) : (i -= 1) {
+        var module_iter = self.scope.items[@intCast(i)].modules.iterator();
+        while (module_iter.next()) |module_entry| {
+            // definitely incorrect, but we currently only have one path segment
+            // this needs to somehow be able to resolve the path against all the segments of the path
+            const simple_path = module_entry.key_ptr.*[0 .. module_entry.key_ptr.len - 3];
+            var path_copy: []const u8 = std.fmt.allocPrint(self.alloc, "{s}", .{simple_path}) catch unreachable;
+            std.mem.reverse(u8, @constCast(path_copy));
+            var split_item = std.mem.split(u8, path_copy, "/");
+            path_copy = split_item.first();
+            std.mem.reverse(u8, @constCast(path_copy));
+            if (std.mem.eql(u8, path_copy, name)) {
+                return module_entry.value_ptr.*;
+            }
+        }
+    }
+
+    return null;
 }
 
 pub fn @"error"(self: *Typechecker, message: []const u8, node_id: Parser.NodeId) !void {

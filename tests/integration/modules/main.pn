@@ -1,5 +1,4 @@
 // output: hello!
-// RUST_LOG: panin::Parser[use_statement]=debug,panin::typechecker[typecheck_namespaced_lookup]=debug,panin::typechecker[typecheck_module]=debug
 
 use utils;
 

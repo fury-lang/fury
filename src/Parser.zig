@@ -572,7 +572,7 @@ pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
         } else if (self.isKeyword("enum")) {
             try curr_body.append(try self.enumDefinition());
         } else if (self.isKeyword("use")) {
-            return try self.@"error"("use statement not supported yet");
+            try curr_body.append(try self.useStatement());
         } else if (self.isKeyword("let")) {
             try curr_body.append(try self.letStatement());
         } else if (self.isKeyword("mut")) {
@@ -1773,6 +1773,47 @@ pub fn rawBuffer(self: *Parser) !NodeId {
         span_start,
         span_end,
     );
+}
+
+pub fn useStatement(self: *Parser) !NodeId {
+    const span_start = self.position();
+    try self._keyword("use");
+
+    // for now let the path be a simple identifier(ex: use utils) without any namespace
+    const path = try self.simpleExpression();
+    const span_end = self.getSpanEnd(path);
+
+    const use_statement = try self.createNode(.{ .use = .{ .path = path } }, span_start, span_end);
+    const fname_path = self.compiler.getSource(path);
+    const fname = try std.fmt.allocPrint(self.alloc, "tests/integration/modules/{s}.pn", .{fname_path});
+
+    if (self.compiler.module_lookup.get(fname)) |_block| {
+        try self.compiler.module_lookup_use.put(path, _block);
+        return use_statement;
+    }
+
+    try self.compiler.addFile(fname);
+    const file_index = self.compiler.file_offsets.items.len - 1;
+    const span_offset = self.compiler.file_offsets.items[file_index].offset;
+
+    const current_file = FileCursor{
+        .file_index = file_index,
+        .span_offset = span_offset,
+    };
+
+    // swap out the file cursor with the new file and restart parsing
+    const old_file = self.current_file;
+    self.current_file = current_file;
+
+    const module_block = try self.block(false);
+
+    // swap back previous file and resume parsing
+    self.current_file = old_file;
+
+    try self.compiler.module_lookup.put(fname, module_block);
+    try self.compiler.module_lookup_use.put(path, module_block);
+
+    return use_statement;
 }
 
 pub fn number(self: *Parser) !NodeId {

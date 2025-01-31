@@ -31,6 +31,13 @@ types: std.ArrayList(Typechecker.Type),
 // indexed by ModuleId
 modules: std.ArrayList(Typechecker.Module),
 
+// `modules` and `module_resolution` are populated by the typechecker
+// `module_lookup` and `module_lookup_use` are populated by the parser
+// lookup the node_id of the parsed block representing a module using it's absolute path
+module_lookup: std.StringHashMap(Parser.NodeId),
+// lookup the id of the block (eg the entire module's loaded source) from the node_id of the path in the use statement
+module_lookup_use: std.AutoHashMap(Parser.NodeId, Parser.NodeId),
+
 // Memory reclamation
 exiting_blocks: std.AutoHashMap(Parser.NodeId, std.ArrayList(Parser.BlockId)),
 
@@ -44,6 +51,8 @@ var_resolution: std.AutoHashMap(Parser.NodeId, Typechecker.VarId),
 fun_resolution: std.AutoHashMap(Parser.NodeId, Typechecker.FuncId),
 type_resolution: std.AutoHashMap(Parser.NodeId, Typechecker.TypeId),
 
+// lookup the id of a Module from the id of the block (value field from module_lookup_use) in the ast
+module_resolution: std.AutoHashMap(Parser.NodeId, Typechecker.ModuleId),
 base_classes: std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.TypeId)),
 
 errors: std.ArrayList(Errors.SourceError),
@@ -82,12 +91,15 @@ pub fn new(alloc: std.mem.Allocator) Compiler {
         .functions = std.ArrayList(Typechecker.Function).init(alloc),
         .types = std.ArrayList(Typechecker.Type).init(alloc),
         .modules = std.ArrayList(Typechecker.Module).init(alloc),
+        .module_lookup = std.StringHashMap(Parser.NodeId).init(alloc),
+        .module_lookup_use = std.AutoHashMap(Parser.NodeId, Parser.NodeId).init(alloc),
         .exiting_blocks = std.AutoHashMap(Parser.NodeId, std.ArrayList(Parser.BlockId)).init(alloc),
         .errors = std.ArrayList(Errors.SourceError).init(alloc),
         .call_resolution = std.AutoHashMap(Parser.NodeId, CallTarget).init(alloc),
         .var_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.VarId).init(alloc),
         .fun_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.FuncId).init(alloc),
         .type_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.TypeId).init(alloc),
+        .module_resolution = std.AutoHashMap(Parser.NodeId, Typechecker.ModuleId).init(alloc),
         .base_classes = std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.TypeId)).init(alloc),
         .methods_on_type = std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.FuncId)).init(alloc),
         .virtual_methods_on_type = std.AutoHashMap(Typechecker.TypeId, std.ArrayList(Typechecker.FuncId)).init(alloc),
@@ -326,6 +338,13 @@ pub fn addFile(self: *Compiler, file_name: []const u8) !void {
 
     const new_source = try std.fmt.allocPrint(self.alloc, "{s}\n{s}", .{ self.source, content });
     self.source = new_source;
+}
+
+pub fn addModule(self: *Compiler, module_block: Parser.NodeId, module: Typechecker.Module) !Typechecker.ModuleId {
+    const module_id = self.modules.items.len;
+    try self.modules.append(module);
+    try self.module_resolution.put(module_block, module_id);
+    return module_id;
 }
 
 pub fn getNode(self: *Compiler, node_id: Parser.NodeId) Parser.AstNode {
@@ -605,6 +624,17 @@ pub fn fullySatifiesVirtualMethods(self: *Compiler, type_id: Typechecker.TypeId,
     }
 
     return true;
+}
+
+pub fn getSourcePath(self: *Compiler, node_id: Parser.NodeId) []const u8 {
+    const position = self.span_start.items[node_id];
+    for (self.file_offsets.items) |file| {
+        if (position >= file.offset and position < file.end) {
+            return file.fname;
+        }
+    }
+
+    @panic("position should always be a valid offset into source content that's already been loaded");
 }
 
 pub fn isGenericType(self: *Compiler, type_id: Typechecker.TypeId, list: std.ArrayList(Typechecker.TypeId)) !bool {

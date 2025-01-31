@@ -49,7 +49,7 @@ test "Tests coverage" {
         }
 
         // imports are not supported yet
-        if (std.mem.startsWith(u8, entry.path, "integration/modules")) {
+        if (std.mem.startsWith(u8, entry.path, "integration/skip")) {
             std.debug.print("{s}: 🚧Skip\n", .{file_path});
             skip += 1;
             continue;
