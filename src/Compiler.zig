@@ -76,7 +76,7 @@ pub const CallTarget = union(enum) {
     node_id: Parser.NodeId,
 };
 
-pub fn new(alloc: std.mem.Allocator) Compiler {
+pub fn init(alloc: std.mem.Allocator) Compiler {
     return Compiler{
         .alloc = alloc,
         .span_start = std.ArrayList(usize).init(alloc),
@@ -213,9 +213,9 @@ pub fn deinit(self: *Compiler) void {
         class_entry.value_ptr.*.deinit();
     }
     self.base_classes.deinit();
-    // TODO check for allocated slices as well
+
     for (self.errors.items) |err| {
-        _ = err;
+        self.alloc.free(err.message);
     }
     self.errors.deinit();
 }
@@ -264,8 +264,8 @@ pub fn print(self: *Compiler) void {
 
     std.debug.print("\nVariables:\n", .{});
     std.debug.print("num variables: {}\n", .{self.variables.items.len});
-    for (self.variables.items, 0..) |_var, var_id| {
-        std.debug.print("{d} name: {s}, type_id: {}, is_mutable: {}, defined_in: {s}, defined_node: {}\n", .{ var_id, self.getSource(_var.name), _var.ty, _var.is_mutable, self.getSource(_var.where_defined), _var.where_defined });
+    for (self.variables.items, 0..) |variable, var_id| {
+        std.debug.print("{d} name: {s}, type_id: {}, is_mutable: {}, defined_in: {s}, defined_node: {}\n", .{ var_id, self.getSource(variable.name), variable.ty, variable.is_mutable, self.getSource(variable.where_defined), variable.where_defined });
     }
 
     std.debug.print("\nFunctions:\n", .{});
@@ -616,8 +616,8 @@ pub fn isCopyableType(self: *Compiler, type_id: Typechecker.TypeId) bool {
 pub fn findPointerTo(self: *Compiler, type_id: Typechecker.TypeId) ?Typechecker.TypeId {
     for (self.types.items, 0..) |ty, found_type_id| {
         switch (ty) {
-            .pointer => |pt| {
-                if (pt.target == type_id) {
+            .pointer => |ptr_ty| {
+                if (ptr_ty.target == type_id) {
                     return found_type_id;
                 }
             },
@@ -666,21 +666,26 @@ pub fn replaceNode(self: *Compiler, node_id: Parser.NodeId, target_ty: Parser.No
     const node = self.getNode(node_id);
     const span_start = self.span_start.items[node_id];
     const span_end = self.span_end.items[node_id];
+
     var new_node_id = self.numAstNodes();
     const new_node = Parser.AstNode{ .type_coercion = .{
         .source_node = new_node_id,
         .target_type = target_ty,
     } };
     new_node_id = try self.createNode(node, span_start, span_end);
+
     if (self.var_resolution.fetchRemove(node_id)) |entry| {
         try self.var_resolution.put(new_node_id, entry.value);
     }
+
     try self.node_types.append(Typechecker.UNKNOWN_TYPE_ID);
     self.ast_node.items[node_id] = new_node;
+
     // swapping
     const tmp = self.node_types.items[node_id];
     self.node_types.items[node_id] = self.node_types.items[new_node_id];
     self.node_types.items[new_node_id] = tmp;
+
     return new_node_id;
 }
 
@@ -793,9 +798,9 @@ pub fn isGenericType(self: *Compiler, type_id: Typechecker.TypeId, list: std.Arr
                 switch (item) {
                     .simple => return false,
                     .single => |single| return try self.isGenericType(single.param, try seen.clone()),
-                    .@"struct" => |st| {
-                        for (st.params.items) |p| {
-                            if (try self.isGenericType(p.ty, try seen.clone())) {
+                    .@"struct" => |s| {
+                        for (s.params.items) |param| {
+                            if (try self.isGenericType(param.ty, try seen.clone())) {
                                 return true;
                             }
                         }
@@ -843,15 +848,15 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
             return try output.toOwnedSlice();
         },
         .i64 => return "i64",
-        .pointer => |pt| {
+        .pointer => |ptr_ty| {
             var output: []const u8 = "";
-            switch (pt.pointer_type) {
+            switch (ptr_ty.pointer_type) {
                 .Owned => output = "owned ",
                 .Shared => output = "shared ",
                 else => {},
             }
-            output = try std.fmt.allocPrint(self.alloc, "{s} {s}", .{ output, try self.prettyType(pt.target) });
-            if (pt.optional) {
+            output = try std.fmt.allocPrint(self.alloc, "{s} {s}", .{ output, try self.prettyType(ptr_ty.target) });
+            if (ptr_ty.optional) {
                 output = try std.fmt.allocPrint(self.alloc, "{s}?", .{output});
             }
             return output;

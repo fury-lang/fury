@@ -8,7 +8,7 @@ const Codegen = @This();
 alloc: std.mem.Allocator,
 compiler: Compiler,
 
-pub fn new(alloc: std.mem.Allocator, compiler: Compiler) !Codegen {
+pub fn init(alloc: std.mem.Allocator, compiler: Compiler) !Codegen {
     return Codegen{
         .alloc = alloc,
         .compiler = compiler,
@@ -355,8 +355,8 @@ pub fn codegenUserPredecls(self: *Codegen, output: *std.ArrayList(u8)) !void {
 pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
     for (self.compiler.types.items, 0..) |ty, idx| {
         switch (ty) {
-            .@"struct" => |_struct| {
-                if (!(_struct.generic_params.items.len == 0)) {
+            .@"struct" => |s| {
+                if (!(s.generic_params.items.len == 0)) {
                     // Don't codegen generic functions. Instead, only codegen their instantiations
                     continue;
                 }
@@ -374,7 +374,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                 try output.appendSlice(id);
                 try output.appendSlice("{\n");
 
-                if (_struct.is_allocator) {
+                if (s.is_allocator) {
                     var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
                     try self.codegenTypename(Typechecker.I64_TYPE_ID, &local_inference, output);
                     try output.append(' ');
@@ -383,9 +383,9 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
 
                 const base_classes = self.compiler.base_classes.get(idx);
                 if (base_classes) |classes| {
-                    const _ty = classes.items[0];
+                    const class_ty = classes.items[0];
                     var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
-                    try self.codegenTypename(_ty, &local_inference, output);
+                    try self.codegenTypename(class_ty, &local_inference, output);
                     try output.appendSlice(" baseclass;\n");
                 }
 
@@ -396,12 +396,12 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                     try output.appendSlice("* vtable;\n");
                 }
 
-                for (_struct.fields.items, 0..) |type_field, _idx| {
+                for (s.fields.items, 0..) |type_field, field_idx| {
                     var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
                     try self.codegenTypename(type_field.ty, &local_inference, output);
                     try output.append(' ');
                     try output.appendSlice(" field_");
-                    const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{_idx});
+                    const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{field_idx});
                     try output.appendSlice(f_id);
                     try output.appendSlice(" /*");
                     try output.appendSlice(type_field.name);
@@ -416,9 +416,9 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                 }
 
                 if (self.compiler.findPointerTo(idx)) |ptr| {
-                    try self.codegenInitializerFunction(ptr, @constCast(&_struct.fields), @constCast(&base_classes), output);
+                    try self.codegenInitializerFunction(ptr, @constCast(&s.fields), @constCast(&base_classes), output);
                     if (!self.compiler.hasUnsatisfiedVirtualMethods(idx)) {
-                        try self.codegenAllocatorFunction(ptr, @constCast(&_struct.fields), _struct.is_allocator, @constCast(&base_classes), output);
+                        try self.codegenAllocatorFunction(ptr, @constCast(&s.fields), s.is_allocator, @constCast(&base_classes), output);
                     }
                 } else {
                     @panic("internal error: can't find pointer to type");
@@ -439,15 +439,15 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                 try output.appendSlice("{\n");
                 try output.appendSlice("int arm_id;\n");
                 try output.appendSlice("union {\n");
-                for (cases.items, 0..) |case, _idx| {
+                for (cases.items, 0..) |case, case_idx| {
                     switch (case) {
                         .single => |single| {
                             var local_inference = std.ArrayList(Typechecker.TypeId).init(self.alloc);
                             try self.codegenTypename(single.param, &local_inference, output);
                             try output.append(' ');
                             try output.appendSlice("case_");
-                            const _id = try std.fmt.allocPrint(self.alloc, "{d}", .{_idx});
-                            try output.appendSlice(_id);
+                            const idx_slice = try std.fmt.allocPrint(self.alloc, "{d}", .{case_idx});
+                            try output.appendSlice(idx_slice);
                             try output.appendSlice(" /*");
                             try output.appendSlice(single.name);
                             try output.appendSlice(" */ ;\n");
@@ -463,8 +463,8 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                                 try self.codegenTypename(arg.ty, &local_inference, output);
                                 try output.append(' ');
                                 try output.appendSlice("case_");
-                                const _id = try std.fmt.allocPrint(self.alloc, "{}_{} /* ", .{ _idx, arg_idx });
-                                try output.appendSlice(_id);
+                                const idx_slice = try std.fmt.allocPrint(self.alloc, "{}_{} /* ", .{ case_idx, arg_idx });
+                                try output.appendSlice(idx_slice);
                                 try output.appendSlice(arg.name);
                                 try output.appendSlice(" */ ;\n");
                             }
@@ -505,8 +505,8 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                                 try self.codegenTypename(param.ty, &local_inference0, output);
                                 try output.append(' ');
                                 try output.appendSlice("case_");
-                                const _id = try std.fmt.allocPrint(self.alloc, "{}_{} /* ", .{ case_offset, param_idx });
-                                try output.appendSlice(_id);
+                                const case_idx_slice = try std.fmt.allocPrint(self.alloc, "{}_{} /* ", .{ case_offset, param_idx });
+                                try output.appendSlice(case_idx_slice);
                                 try output.appendSlice(param.name);
                                 try output.appendSlice(" */ ");
                             }
@@ -521,8 +521,8 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                     var local_inference1 = std.ArrayList(Typechecker.TypeId).init(self.alloc);
                     try self.codegenTypename(idx, &local_inference1, output);
                     try output.appendSlice("*)allocate(allocator, sizeof(struct enum_");
-                    const _id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
-                    try output.appendSlice(_id);
+                    const idx_slice = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                    try output.appendSlice(idx_slice);
                     try output.appendSlice("), allocation_id);\n");
 
                     try output.appendSlice("tmp->arm_id = \n");

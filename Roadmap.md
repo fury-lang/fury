@@ -1,4 +1,5 @@
 - Self hosting
+- Standard library
 - Formatter
 - Editor support
 - Better errors

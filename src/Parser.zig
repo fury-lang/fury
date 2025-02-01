@@ -333,7 +333,7 @@ pub const Block = struct {
     nodes: std.ArrayList(NodeId),
     may_locally_allocate: ?usize,
 
-    pub fn new(nodes: std.ArrayList(NodeId)) Block {
+    pub fn init(nodes: std.ArrayList(NodeId)) Block {
         return Block{
             .nodes = nodes,
             .may_locally_allocate = null,
@@ -345,7 +345,7 @@ fn isSymbol(b: u8) bool {
     return b == '+' or b == '-' or b == '*' or b == '/' or b == '.' or b == ',' or b == '(' or b == ')' or b == '[' or b == ']' or b == '{' or b == '}' or b == '<' or b == '>' or b == ':' or b == ';' or b == '=' or b == '$' or b == '|' or b == '!' or b == '~' or b == '&' or b == '\'' or b == '"' or b == '?';
 }
 
-pub fn new(alloc: std.mem.Allocator, compiler: Compiler, span_offset: usize) Parser {
+pub fn init(alloc: std.mem.Allocator, compiler: Compiler, span_offset: usize) Parser {
     const content_length = compiler.source.len - span_offset;
     const current_file = FileCursor{
         .span_offset = span_offset,
@@ -436,7 +436,7 @@ pub fn isKeyword(self: *Parser, keyword: []const u8) bool {
     return false;
 }
 
-pub fn _keyword(self: *Parser, keyword: []const u8) !void {
+pub fn bumpKeyword(self: *Parser, keyword: []const u8) !void {
     if (self.peek()) |token| {
         if (token.token_type == TokenType.Name) {
             if (std.mem.eql(u8, self.compiler.source[token.span_start..token.span_end], keyword)) {
@@ -545,7 +545,7 @@ pub fn program(self: *Parser) !NodeId {
 }
 
 pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
-    const span_start = self.position();
+    var span_start = self.position();
     var span_end = self.position();
 
     var curr_body = std.ArrayList(NodeId).init(self.alloc);
@@ -592,9 +592,9 @@ pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
         } else if (self.isKeyword("unsafe")) {
             try curr_body.append(try self.unsafeBlock());
         } else {
-            const _span_start = self.position();
+            span_start = self.position();
             const expr = try self.expressionOrAssignment();
-            const _span_end = self.getSpanEnd(expr);
+            span_end = self.getSpanEnd(expr);
 
             if (self.isExpectedToken(TokenType.Semicolon)) {
                 // This is a statement, not an expression
@@ -602,8 +602,8 @@ pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
                 try curr_body.append(
                     try self.createNode(
                         .{ .statement = expr },
-                        _span_start,
-                        _span_end,
+                        span_start,
+                        span_end,
                     ),
                 );
             } else {
@@ -612,7 +612,7 @@ pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
         }
     }
 
-    try self.compiler.blocks.append(Block.new(curr_body));
+    try self.compiler.blocks.append(Block.init(curr_body));
 
     return try self.createNode(
         .{ .block = self.compiler.blocks.items.len - 1 },
@@ -622,30 +622,30 @@ pub fn block(self: *Parser, expect_curly_braces: bool) anyerror!NodeId {
 }
 
 pub fn externDefinition(self: *Parser) !NodeId {
-    const span_start = self.position();
+    var span_start = self.position();
 
-    try self._keyword("extern");
+    try self.bumpKeyword("extern");
 
     if (self.isKeyword("type")) {
-        try self._keyword("type");
+        try self.bumpKeyword("type");
 
-        const _name = try self.name();
-        const _span_start = self.compiler.span_start.items[_name];
-        const span_end = self.compiler.span_end.items[_name];
+        const type_name = try self.name();
+        span_start = self.compiler.span_start.items[type_name];
+        const span_end = self.compiler.span_end.items[type_name];
 
         return try self.createNode(
-            .{ .extern_type = .{ .name = _name } },
-            _span_start,
+            .{ .extern_type = .{ .name = type_name } },
+            span_start,
             span_end,
         );
     } else {
         // Assume "C" for now?
         _ = try self.string();
 
-        try self._keyword("fun");
+        try self.bumpKeyword("fun");
 
-        const _name = try self.name();
-        const _params = try self.params();
+        const fun_name = try self.name();
+        const fun_params = try self.params();
 
         var span_end: usize = undefined;
 
@@ -655,14 +655,14 @@ pub fn externDefinition(self: *Parser) !NodeId {
             return_ty = try self.typeName();
             span_end = self.getSpanEnd(return_ty.?);
         } else {
-            span_end = self.getSpanEnd(_params);
+            span_end = self.getSpanEnd(fun_params);
         }
 
         return try self.createNode(
             .{ .fun = .{
-                .name = _name,
+                .name = fun_name,
                 .type_params = null,
-                .params = _params,
+                .params = fun_params,
                 .lifetime_annotations = std.ArrayList(NodeId).init(self.alloc),
                 .return_ty = return_ty,
                 .initial_node_id = null,
@@ -676,17 +676,17 @@ pub fn externDefinition(self: *Parser) !NodeId {
 }
 
 pub fn funDefinition(self: *Parser) anyerror!NodeId {
-    const span_start = self.position();
-    try self._keyword("fun");
+    var span_start = self.position();
+    try self.bumpKeyword("fun");
 
-    const _name = try self.name();
+    const fun_name = try self.name();
 
     var type_params: ?NodeId = null;
     if (self.isExpectedToken(TokenType.LessThan)) {
         type_params = try self.typeParams();
     }
 
-    const _params = try self.params();
+    const fun_params = try self.params();
 
     var lifetime_annotations = std.ArrayList(NodeId).init(self.alloc);
 
@@ -719,11 +719,11 @@ pub fn funDefinition(self: *Parser) anyerror!NodeId {
                     rhs = try self.variable();
                 }
 
-                const _span_start = self.compiler.span_start.items[lhs];
-                const _span_end = self.compiler.span_start.items[rhs];
+                span_start = self.compiler.span_start.items[lhs];
+                const span_end = self.compiler.span_start.items[rhs];
 
                 try lifetime_annotations.append(
-                    try self.createNode(.{ .binary_op = .{ .left = lhs, .op = op, .right = rhs } }, _span_start, _span_end),
+                    try self.createNode(.{ .binary_op = .{ .left = lhs, .op = op, .right = rhs } }, span_start, span_end),
                 );
             } else {
                 _ = try self.@"error"("expected: lifetime annotation");
@@ -740,11 +740,11 @@ pub fn funDefinition(self: *Parser) anyerror!NodeId {
 
     const initial_node_id: ?NodeId = self.compiler.numAstNodes();
 
-    var _block: ?NodeId = null;
+    var fun_block: ?NodeId = null;
     var span_end: usize = undefined;
     if (self.isExpectedToken(TokenType.LCurly)) {
-        _block = try self.block(true);
-        span_end = self.getSpanEnd(_block.?);
+        fun_block = try self.block(true);
+        span_end = self.getSpanEnd(fun_block.?);
     } else {
         span_end = self.position();
     }
@@ -752,13 +752,13 @@ pub fn funDefinition(self: *Parser) anyerror!NodeId {
     return try self.createNode(
         .{
             .fun = .{
-                .name = _name,
+                .name = fun_name,
                 .type_params = type_params,
-                .params = _params,
+                .params = fun_params,
                 .lifetime_annotations = lifetime_annotations,
                 .return_ty = return_ty,
                 .initial_node_id = initial_node_id,
-                .block = _block,
+                .block = fun_block,
                 .is_extern = false,
             },
         },
@@ -812,7 +812,7 @@ pub fn params(self: *Parser) !NodeId {
 }
 
 pub fn paramList(self: *Parser) !std.ArrayList(NodeId) {
-    var _params = std.ArrayList(NodeId).init(self.alloc);
+    var params_list = std.ArrayList(NodeId).init(self.alloc);
     while (self.hasTokens()) {
         if (self.isExpectedToken(TokenType.RParen) or self.isExpectedToken(TokenType.RSquare) or self.isExpectedToken(TokenType.Pipe)) {
             break;
@@ -832,7 +832,7 @@ pub fn paramList(self: *Parser) !std.ArrayList(NodeId) {
             _ = self.next();
         }
 
-        const _name = try self.name();
+        const param_name = try self.name();
         if (self.isExpectedToken(TokenType.Colon)) {
             try self.colon();
 
@@ -840,22 +840,22 @@ pub fn paramList(self: *Parser) !std.ArrayList(NodeId) {
 
             const span_end = self.getSpanEnd(ty);
 
-            try _params.append(
+            try params_list.append(
                 try self.createNode(
-                    .{ .param = .{ .name = _name, .ty = ty, .is_mutable = is_mutable } },
+                    .{ .param = .{ .name = param_name, .ty = ty, .is_mutable = is_mutable } },
                     span_start,
                     span_end,
                 ),
             );
         } else {
-            const name_contents = self.compiler.getSource(_name);
+            const name_contents = self.compiler.getSource(param_name);
 
             if (std.mem.eql(u8, name_contents, "self")) {
-                const span_end = self.getSpanEnd(_name);
+                const span_end = self.getSpanEnd(param_name);
 
                 const ty = try self.createNode(
                     .{ .type = .{
-                        .name = _name,
+                        .name = param_name,
                         .params = null,
                         .optional = false,
                         .pointer_type = PointerType.Unknown,
@@ -864,37 +864,37 @@ pub fn paramList(self: *Parser) !std.ArrayList(NodeId) {
                     span_end,
                 );
 
-                try _params.append(
+                try params_list.append(
                     try self.createNode(
-                        .{ .param = .{ .name = _name, .ty = ty, .is_mutable = is_mutable } },
+                        .{ .param = .{ .name = param_name, .ty = ty, .is_mutable = is_mutable } },
                         span_start,
                         span_end,
                     ),
                 );
             } else {
-                try _params.append(try self.@"error"("parameter missing type"));
+                try params_list.append(try self.@"error"("parameter missing type"));
             }
         }
     }
 
-    return _params;
+    return params_list;
 }
 
 pub fn typeName(self: *Parser) anyerror!NodeId {
     if (self.isKeyword("raw")) {
         // Buffer typename
         // FIXME: this should probably be an array or vector once we support them
-        try self._keyword("raw");
+        try self.bumpKeyword("raw");
         const span_start = self.position();
         try self.lsquare();
 
-        const _name = try self.typeName();
-        const span_end = self.getSpanEnd(_name);
+        const type_name = try self.typeName();
+        const span_end = self.getSpanEnd(type_name);
 
         try self.rsquare();
 
         return try self.createNode(
-            .{ .raw_buffer_type = .{ .inner = _name } },
+            .{ .raw_buffer_type = .{ .inner = type_name } },
             span_start,
             span_end,
         );
@@ -912,11 +912,11 @@ pub fn typeName(self: *Parser) anyerror!NodeId {
                 return try self.funTypename();
             }
 
-            const _name = try self.name();
-            var _params: ?NodeId = null;
+            const type_name = try self.name();
+            var type_params: ?NodeId = null;
             if (self.isExpectedToken(TokenType.LessThan)) {
                 // We have generics
-                _params = try self.typeParams();
+                type_params = try self.typeParams();
             }
 
             var optional = false;
@@ -927,7 +927,7 @@ pub fn typeName(self: *Parser) anyerror!NodeId {
             }
 
             return try self.createNode(
-                .{ .type = .{ .name = _name, .params = _params, .optional = optional, .pointer_type = pointer_type } },
+                .{ .type = .{ .name = type_name, .params = type_params, .optional = optional, .pointer_type = pointer_type } },
                 token.span_start,
                 token.span_end,
             );
@@ -941,18 +941,18 @@ pub fn typeName(self: *Parser) anyerror!NodeId {
 
 pub fn funTypename(self: *Parser) !NodeId {
     const span_start = self.position();
-    try self._keyword("fun");
+    try self.bumpKeyword("fun");
 
     try self.lparen();
 
-    var _params = std.ArrayList(NodeId).init(self.alloc);
+    var fun_params = std.ArrayList(NodeId).init(self.alloc);
 
     while (true) {
         if (self.isExpectedToken(TokenType.RParen)) {
             try self.rparen();
             break;
         } else {
-            try _params.append(try self.typeName());
+            try fun_params.append(try self.typeName());
         }
     }
 
@@ -963,7 +963,7 @@ pub fn funTypename(self: *Parser) !NodeId {
     const span_end = self.getSpanEnd(return_ty);
 
     return try self.createNode(
-        .{ .fun_type = .{ .params = _params, .ret = return_ty } },
+        .{ .fun_type = .{ .params = fun_params, .ret = return_ty } },
         span_start,
         span_end,
     );
@@ -981,7 +981,7 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
     var expr_stack = std.ArrayList(NodeId).init(self.alloc);
     defer expr_stack.deinit();
     var last_prec: usize = 1000000;
-    const span_start = self.position();
+    var span_start = self.position();
 
     // Check for special forms
     if (self.isKeyword("if")) {
@@ -1040,25 +1040,25 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
 
             while (op_prec <= last_prec and expr_stack.items.len > 1) {
                 // TODO hadle error cases here on stack
-                const _rhs = expr_stack.pop();
-                const _op = expr_stack.pop();
+                const rhs_new = expr_stack.pop();
+                const op_new = expr_stack.pop();
 
-                last_prec = self.operatorPrecedence(_op);
+                last_prec = self.operatorPrecedence(op_new);
 
                 if (last_prec < op_prec) {
-                    try expr_stack.append(_op);
-                    try expr_stack.append(_rhs);
+                    try expr_stack.append(op_new);
+                    try expr_stack.append(rhs_new);
                     break;
                 }
 
-                const _lhs = expr_stack.pop();
-                const _span_start = self.compiler.span_start.items[_lhs];
-                const span_end = self.compiler.span_end.items[_rhs];
+                lhs = expr_stack.pop();
+                span_start = self.compiler.span_start.items[lhs];
+                const span_end = self.compiler.span_end.items[rhs_new];
 
                 try expr_stack.append(
                     try self.createNode(
-                        .{ .binary_op = .{ .left = _lhs, .op = _op, .right = _rhs } },
-                        _span_start,
+                        .{ .binary_op = .{ .left = lhs, .op = op_new, .right = rhs_new } },
+                        span_start,
                         span_end,
                     ),
                 );
@@ -1075,17 +1075,17 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
 
     while (expr_stack.items.len > 1) {
         // TODO handle error cases here on stack
-        const _rhs = expr_stack.pop();
-        const _op = expr_stack.pop();
-        const _lhs = expr_stack.pop();
+        const rhs = expr_stack.pop();
+        const op = expr_stack.pop();
+        lhs = expr_stack.pop();
 
-        const _span_start = self.compiler.span_start.items[lhs];
-        const span_end = self.compiler.span_end.items[_rhs];
+        span_start = self.compiler.span_start.items[lhs];
+        const span_end = self.compiler.span_end.items[rhs];
 
         try expr_stack.append(
             try self.createNode(
-                .{ .binary_op = .{ .left = _lhs, .op = _op, .right = _rhs } },
-                _span_start,
+                .{ .binary_op = .{ .left = lhs, .op = op, .right = rhs } },
+                span_start,
                 span_end,
             ),
         );
@@ -1128,12 +1128,12 @@ pub fn simpleExpression(self: *Parser) anyerror!NodeId {
     } else if (self.isExpectedToken(TokenType.Name)) {
         expr = try self.variableOrCall();
     } else if (self.isExpectedToken(TokenType.Dot)) {
-        const _span_start = self.position();
+        const span_start_new = self.position();
         const span_end = self.position() + 1;
 
         expr = try self.createNode(
             .{ .name = Void.void },
-            _span_start,
+            span_start_new,
             span_end,
         );
     } else {
@@ -1158,9 +1158,9 @@ pub fn simpleExpression(self: *Parser) anyerror!NodeId {
             _ = self.next();
 
             const prev_offset = self.current_file.span_offset;
-            const _name = try self.name();
+            const member_name = try self.name();
 
-            var field_or_call = _name;
+            var field_or_call = member_name;
             if (self.isExpectedToken(TokenType.LParen)) {
                 self.current_file.span_offset = prev_offset;
                 field_or_call = try self.variableOrCall();
@@ -1228,7 +1228,7 @@ pub fn letStatement(self: *Parser) !NodeId {
     const is_mutable = false;
     const span_start = self.position();
 
-    try self._keyword("let");
+    try self.bumpKeyword("let");
 
     const variable_name = try self.variable();
 
@@ -1255,7 +1255,7 @@ pub fn mutStatement(self: *Parser) !NodeId {
     const is_mutable = true;
     const span_start = self.position();
 
-    try self._keyword("mut");
+    try self.bumpKeyword("mut");
 
     const variable_name = try self.variable();
 
@@ -1280,14 +1280,14 @@ pub fn mutStatement(self: *Parser) !NodeId {
 
 pub fn whileStatement(self: *Parser) !NodeId {
     const span_start = self.position();
-    try self._keyword("while");
+    try self.bumpKeyword("while");
 
     const condition = try self.expression();
-    const _block = try self.block(true);
-    const span_end = self.getSpanEnd(_block);
+    const while_block = try self.block(true);
+    const span_end = self.getSpanEnd(while_block);
 
     return try self.createNode(
-        .{ .@"while" = .{ .condition = condition, .block = _block } },
+        .{ .@"while" = .{ .condition = condition, .block = while_block } },
         span_start,
         span_end,
     );
@@ -1295,17 +1295,17 @@ pub fn whileStatement(self: *Parser) !NodeId {
 
 pub fn forStatement(self: *Parser) !NodeId {
     const span_start = self.position();
-    try self._keyword("for");
+    try self.bumpKeyword("for");
 
-    const _variable = try self.variable();
-    try self._keyword("in");
+    const for_variable = try self.variable();
+    try self.bumpKeyword("in");
 
     const range = try self.simpleExpression();
-    const _block = try self.block(true);
-    const span_end = self.getSpanEnd(_block);
+    const for_block = try self.block(true);
+    const span_end = self.getSpanEnd(for_block);
 
     return try self.createNode(
-        .{ .@"for" = .{ .variable = _variable, .range = range, .block = _block } },
+        .{ .@"for" = .{ .variable = for_variable, .range = range, .block = for_block } },
         span_start,
         span_end,
     );
@@ -1319,9 +1319,9 @@ pub fn classStructDefinition(self: *Parser, private_by_default: bool) !NodeId {
     var span_end = self.position();
 
     if (private_by_default) {
-        _ = try self._keyword("class");
+        _ = try self.bumpKeyword("class");
     } else {
-        _ = try self._keyword("struct");
+        _ = try self.bumpKeyword("struct");
     }
 
     var explicit_no_alloc = false;
@@ -1330,7 +1330,7 @@ pub fn classStructDefinition(self: *Parser, private_by_default: bool) !NodeId {
         explicit_no_alloc = true;
     }
 
-    const _name = try self.typeName();
+    const type_name = try self.typeName();
 
     // inheritance
     var base_class: ?NodeId = null;
@@ -1385,7 +1385,7 @@ pub fn classStructDefinition(self: *Parser, private_by_default: bool) !NodeId {
     }
 
     return try self.createNode(
-        .{ .@"struct" = .{ .typename = _name, .fields = fields, .methods = methods, .explicit_no_alloc = explicit_no_alloc, .base_class = base_class } },
+        .{ .@"struct" = .{ .typename = type_name, .fields = fields, .methods = methods, .explicit_no_alloc = explicit_no_alloc, .base_class = base_class } },
         span_start,
         span_end,
     );
@@ -1398,9 +1398,9 @@ pub fn enumDefinition(self: *Parser) !NodeId {
     const span_start = self.position();
     var span_end = self.position();
 
-    _ = try self._keyword("enum");
+    _ = try self.bumpKeyword("enum");
 
-    const _name = try self.typeName();
+    const type_name = try self.typeName();
     try self.lcurly();
 
     // parse fields
@@ -1412,8 +1412,8 @@ pub fn enumDefinition(self: *Parser) !NodeId {
         }
 
         if (self.isKeyword("fun")) {
-            const fun = try self.funDefinition();
-            try methods.append(fun);
+            const fun_definition = try self.funDefinition();
+            try methods.append(fun_definition);
         } else if (self.isExpectedToken(TokenType.Newline)) {
             _ = self.newLine();
         } else {
@@ -1424,7 +1424,7 @@ pub fn enumDefinition(self: *Parser) !NodeId {
     }
 
     return try self.createNode(
-        .{ .@"enum" = .{ .typename = _name, .cases = cases, .methods = methods } },
+        .{ .@"enum" = .{ .typename = type_name, .cases = cases, .methods = methods } },
         span_start,
         span_end,
     );
@@ -1432,8 +1432,8 @@ pub fn enumDefinition(self: *Parser) !NodeId {
 
 pub fn enumCase(self: *Parser) !NodeId {
     const span_start = self.position();
-    const _name = try self.name();
-    var span_end = self.getSpanEnd(_name);
+    const enum_name = try self.name();
+    var span_end = self.getSpanEnd(enum_name);
 
     var payload: ?std.ArrayList(NodeId) = std.ArrayList(NodeId).init(self.alloc);
     if (self.isExpectedToken(TokenType.LParen)) {
@@ -1455,7 +1455,7 @@ pub fn enumCase(self: *Parser) !NodeId {
             }
 
             // field
-            const _span_start = self.position();
+            const span_start_field = self.position();
             const field_name = try self.name();
             try self.colon();
             const field_type = try self.typeName();
@@ -1465,7 +1465,7 @@ pub fn enumCase(self: *Parser) !NodeId {
 
             const named_field = try self.createNode(
                 .{ .named_value = .{ .name = field_name, .value = field_type } },
-                _span_start,
+                span_start_field,
                 span_end,
             );
             try payload.?.append(named_field);
@@ -1475,7 +1475,7 @@ pub fn enumCase(self: *Parser) !NodeId {
     }
 
     return try self.createNode(
-        .{ .enum_case = .{ .name = _name, .payload = payload } },
+        .{ .enum_case = .{ .name = enum_name, .payload = payload } },
         span_start,
         span_end,
     );
@@ -1485,7 +1485,7 @@ pub fn matchExpression(self: *Parser) !NodeId {
     const span_start = self.position();
     var span_end: usize = undefined;
 
-    try self._keyword("match");
+    try self.bumpKeyword("match");
 
     const target = try self.expression();
 
@@ -1532,7 +1532,7 @@ pub fn ifExpression(self: *Parser) !NodeId {
     const span_start = self.position();
     var span_end: usize = undefined;
 
-    try self._keyword("if");
+    try self.bumpKeyword("if");
 
     const condition = try self.expression();
     const then_block = try self.block(true);
@@ -1555,9 +1555,9 @@ pub fn ifExpression(self: *Parser) !NodeId {
 
 pub fn variable(self: *Parser) !NodeId {
     if (self.isExpectedToken(TokenType.Name)) {
-        const _name = self.next().?;
-        const name_start = _name.span_start;
-        const name_end = _name.span_end;
+        const var_name = self.next().?;
+        const name_start = var_name.span_start;
+        const name_end = var_name.span_end;
         return try self.createNode(AstNode{ .name = Void.void }, name_start, name_end);
     } else {
         return try self.@"error"("expected: variable");
@@ -1568,9 +1568,9 @@ pub fn variableOrCall(self: *Parser) !NodeId {
     if (self.isExpectedToken(TokenType.Name)) {
         const span_start = self.position();
 
-        const _name = self.next().?;
-        const name_start = _name.span_start;
-        const name_end = _name.span_end;
+        const ident_name = self.next().?;
+        const name_start = ident_name.span_start;
+        const name_end = ident_name.span_end;
 
         if (self.isExpectedToken(TokenType.LParen)) {
             var head = try self.createNode(AstNode{ .name = Void.void }, name_start, name_end);
@@ -1594,12 +1594,12 @@ pub fn variableOrCall(self: *Parser) !NodeId {
                         } else if (self.isExpectedToken(TokenType.Colon)) {
                             // we have a named value
                             try self.colon();
-                            const name0 = val;
+                            const named_name = val;
                             const value = try self.expression();
                             const value_end = self.position();
 
                             try args.append(try self.createNode(
-                                .{ .named_value = .{ .name = name0, .value = value } },
+                                .{ .named_value = .{ .name = named_name, .value = value } },
                                 value_start,
                                 value_end,
                             ));
@@ -1639,14 +1639,14 @@ pub fn newAllocation(self: *Parser) !NodeId {
 
     var required_lifetime = RequiredLifetime.Unknown;
     if (self.isKeyword("local")) {
-        try self._keyword("local");
+        try self.bumpKeyword("local");
         required_lifetime = RequiredLifetime.Local;
     } else {
-        try self._keyword("new");
+        try self.bumpKeyword("new");
         if (self.isExpectedToken(TokenType.LParen)) {
             try self.lparen();
             if (self.isKeyword("local")) {
-                try self._keyword("local");
+                try self.bumpKeyword("local");
                 required_lifetime = RequiredLifetime.Local;
             } else {
                 return try self.@"error"("unknown lifetime specifier");
@@ -1677,7 +1677,7 @@ pub fn returnStatement(self: *Parser) !NodeId {
     const span_start = self.position();
     var span_end: usize = undefined;
 
-    try self._keyword("return");
+    try self.bumpKeyword("return");
 
     var ret_val: ?NodeId = null;
     if (self.isExpression()) {
@@ -1698,7 +1698,7 @@ pub fn breakStatement(self: *Parser) !NodeId {
     const span_start = self.position();
     const span_end = span_start + 5;
 
-    try self._keyword("break");
+    try self.bumpKeyword("break");
 
     return try self.createNode(.{ .@"break" = Void.void }, span_start, span_end);
 }
@@ -1706,7 +1706,7 @@ pub fn breakStatement(self: *Parser) !NodeId {
 pub fn deferStatement(self: *Parser) !NodeId {
     const span_start = self.position();
 
-    try self._keyword("defer");
+    try self.bumpKeyword("defer");
 
     const pointer = try self.variable();
     const callback = try self.expression();
@@ -1722,7 +1722,7 @@ pub fn resizeStatement(self: *Parser) !NodeId {
     const span_start = self.position();
 
     //FIXME: note this syntax is likely going to change. It's here as a placeholder.
-    try self._keyword("resize");
+    try self.bumpKeyword("resize");
 
     const pointer = try self.simpleExpression();
     const new_size = try self.simpleExpression();
@@ -1737,18 +1737,18 @@ pub fn resizeStatement(self: *Parser) !NodeId {
 pub fn unsafeBlock(self: *Parser) !NodeId {
     const span_start = self.position();
 
-    try self._keyword("unsafe");
+    try self.bumpKeyword("unsafe");
 
-    const _block = try self.block(true);
-    const span_end = self.getSpanEnd(_block);
+    const unsafe_block = try self.block(true);
+    const span_end = self.getSpanEnd(unsafe_block);
 
-    return try self.createNode(.{ .unsafe_block = _block }, span_start, span_end);
+    return try self.createNode(.{ .unsafe_block = unsafe_block }, span_start, span_end);
 }
 
 pub fn rawBuffer(self: *Parser) !NodeId {
     const span_start = self.position();
     var span_end: usize = undefined;
-    try self._keyword("raw");
+    try self.bumpKeyword("raw");
 
     var param_list = std.ArrayList(NodeId).init(self.alloc);
     try self.lsquare();
@@ -1778,7 +1778,7 @@ pub fn rawBuffer(self: *Parser) !NodeId {
 
 pub fn useStatement(self: *Parser) !NodeId {
     const span_start = self.position();
-    try self._keyword("use");
+    try self.bumpKeyword("use");
 
     // for now let the path be a simple identifier(ex: use utils) without any namespace
     const path = try self.simpleExpression();
@@ -2053,9 +2053,9 @@ pub fn name(self: *Parser) !NodeId {
 
 pub fn returnLifetime(self: *Parser) !NodeId {
     if (self.isKeyword("return")) {
-        const _name = self.next().?;
-        const name_start = _name.span_start;
-        const name_end = _name.span_end;
+        const lifetime_name = self.next().?;
+        const name_start = lifetime_name.span_start;
+        const name_end = lifetime_name.span_end;
         return try self.createNode(.{ .return_lifetime = Void.void }, name_start, name_end);
     } else {
         return try self.@"error"("expected: 'return' lifetime");
@@ -2222,12 +2222,12 @@ pub fn comma(self: *Parser) !void {
 pub fn lexQuotedString(self: *Parser) ?Token {
     const span_start = self.current_file.span_offset;
     var span_position = span_start + 1;
-    var is_excaped = false;
+    var is_escaped = false;
     while (span_position < self.currentFileEnd()) {
-        if (is_excaped) {
-            is_excaped = false;
+        if (is_escaped) {
+            is_escaped = false;
         } else if (self.compiler.source[span_position] == '\\') {
-            is_excaped = true;
+            is_escaped = true;
         } else if (self.compiler.source[span_position] == '"') {
             span_position += 1;
             break;
@@ -2247,12 +2247,12 @@ pub fn lexQuotedString(self: *Parser) ?Token {
 pub fn lexQuotedCString(self: *Parser) ?Token {
     const span_start = self.current_file.span_offset + 1;
     var span_position = span_start + 1;
-    var is_excaped = false;
+    var is_escaped = false;
     while (span_position < self.currentFileEnd()) {
-        if (is_excaped) {
-            is_excaped = false;
+        if (is_escaped) {
+            is_escaped = false;
         } else if (self.compiler.source[span_position] == '\\') {
-            is_excaped = true;
+            is_escaped = true;
         } else if (self.compiler.source[span_position] == '"') {
             span_position += 1;
             break;
@@ -2273,12 +2273,12 @@ pub fn lexQuotedCString(self: *Parser) ?Token {
 pub fn lexQuotedCChar(self: *Parser) ?Token {
     const span_start = self.current_file.span_offset + 1;
     var span_position = span_start + 1;
-    var is_excaped = false;
+    var is_escaped = false;
     while (span_position < self.compiler.source.len) {
-        if (is_excaped) {
-            is_excaped = false;
+        if (is_escaped) {
+            is_escaped = false;
         } else if (self.compiler.source[span_position] == '\\') {
-            is_excaped = true;
+            is_escaped = true;
         } else if (self.compiler.source[span_position] == '\'') {
             span_position += 1;
             break;
@@ -2692,6 +2692,7 @@ pub fn lexSymbol(self: *Parser) ?Token {
         },
         else => {
             const symbol = std.fmt.allocPrint(self.alloc, "Internal compiler error: symbol character mismatched in lexer: {c}", .{self.compiler.source[span_start]}) catch unreachable;
+            defer self.alloc.free(symbol);
             _ = self.@"error"(symbol) catch {};
             return null;
         },
@@ -2760,29 +2761,29 @@ fn isAsciiHexDigit(c: u8) bool {
     return isAsciiDigit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
 }
 
-test "Parser quick test" {
-    const alloc = std.heap.page_allocator;
+// test "Parser quick test" {
+//     const alloc = std.heap.page_allocator;
 
-    const file_name: []const u8 = "tests/integration/variables/variable_mutation.fury";
+//     const file_name: []const u8 = "tests/integration/variables/variable_mutation.fury";
 
-    const file = try std.fs.cwd().openFile(file_name, .{});
-    defer file.close();
+//     const file = try std.fs.cwd().openFile(file_name, .{});
+//     defer file.close();
 
-    const file_size = try file.getEndPos();
-    const source = try alloc.alloc(u8, file_size);
-    _ = try file.read(source);
+//     const file_size = try file.getEndPos();
+//     const source = try alloc.alloc(u8, file_size);
+//     _ = try file.read(source);
 
-    var compiler = Compiler.new(alloc);
-    const span_offset = compiler.spanOffset();
-    try compiler.addFile(file_name);
+//     var compiler = Compiler.init(alloc);
+//     const span_offset = compiler.spanOffset();
+//     try compiler.addFile(file_name);
 
-    var parser = Parser.new(alloc, compiler, span_offset);
-    defer compiler.deinit();
-    var c = try parser.parse();
+//     var parser = Parser.init(alloc, compiler, span_offset);
+//     defer compiler.deinit();
+//     var c = try parser.parse();
 
-    // if (c.errors.items.len == 0) c.print();
+//     // if (c.errors.items.len == 0) c.print();
 
-    for (c.errors.items) |*err| {
-        try c.printErrors(err);
-    }
-}
+//     for (c.errors.items) |*err| {
+//         try c.printErrors(err);
+//     }
+// }

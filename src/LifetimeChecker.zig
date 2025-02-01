@@ -29,7 +29,7 @@ pub const AllocationLifetime = union(enum) {
     unknown: Parser.Void,
 };
 
-pub fn new(alloc: std.mem.Allocator, compiler: Compiler) !LifetimeChecker {
+pub fn init(alloc: std.mem.Allocator, compiler: Compiler) !LifetimeChecker {
     return .{
         .alloc = alloc,
         .compiler = compiler,
@@ -96,6 +96,7 @@ pub fn currentBlockMayAllocate(self: *LifetimeChecker, scope_level: usize, node_
         .scope => |scope| {
             if (scope.level > scope_level) {
                 const error_msg = try std.fmt.allocPrint(self.alloc, "current_block_may_allocate saw an impossible level/scope_level: {} vs {}", .{ scope.level, scope_level });
+                defer self.alloc.free(error_msg);
                 @panic(error_msg);
             }
         },
@@ -143,11 +144,11 @@ pub fn expandLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, lifetime_f
             self.compiler.setNodeLifetime(node_id, lifetime);
             try self.incrementLifetimeInferences();
         },
-        .param => |p| {
-            const var_id = p.var_id;
+        .param => |param| {
+            const var_id = param.var_id;
             switch (lifetime) {
-                .param => |pdep| {
-                    const incoming_var_id = pdep.var_id;
+                .param => |lifetime_param| {
+                    const incoming_var_id = lifetime_param.var_id;
                     const param_name1 = self.compiler.getVariableName(var_id);
                     const param_name2 = self.compiler.getVariableName(incoming_var_id);
 
@@ -161,14 +162,14 @@ pub fn expandLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, lifetime_f
                     // Params outlive all scopes
                 },
                 .@"return" => {
-                    const param_name1 = self.compiler.getVariableName(var_id);
-                    const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime between param '{s}' and return", .{param_name1});
+                    const param_name = self.compiler.getVariableName(var_id);
+                    const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime between param '{s}' and return", .{param_name});
                     try self.@"error"(error_msg, node_id);
                     // TODO add a note
                 },
                 else => {
-                    const param_name1 = self.compiler.getVariableName(var_id);
-                    const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime for param '{s}'", .{param_name1});
+                    const param_name = self.compiler.getVariableName(var_id);
+                    const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime for param '{s}'", .{param_name});
                     try self.@"error"(error_msg, node_id);
                 },
             }
@@ -194,18 +195,18 @@ pub fn expandLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, lifetime_f
                 },
             }
         },
-        .scope => |s| {
-            const current_level = s.level;
+        .scope => |scope| {
+            const current_level = scope.level;
             switch (lifetime) {
-                .scope => |sdep| {
-                    const new_level = sdep.level;
+                .scope => |lifetime_scope| {
+                    const new_level = lifetime_scope.level;
                     if (new_level < current_level) {
                         self.compiler.setNodeLifetime(node_id, lifetime);
                         try self.incrementLifetimeInferences();
                     }
                 },
-                .param => |p| {
-                    const var_id = p.var_id;
+                .param => |param| {
+                    const var_id = param.var_id;
                     const var_type = self.compiler.getVariable(var_id).ty;
 
                     if (!self.compiler.isAllocatorType(var_type)) {
@@ -455,9 +456,9 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
                                     .param => |p| {
                                         // figure out which arg corresponds to this var_id
                                         const var_id = p.var_id;
-                                        for (params.items, 0..) |param2, _idx| {
-                                            if (_idx >= args.items.len) break;
-                                            const arg2 = args.items[_idx];
+                                        for (params.items, 0..) |param2, param_idx| {
+                                            if (param_idx >= args.items.len) break;
+                                            const arg2 = args.items[param_idx];
                                             if (param2.var_id == var_id and arg != arg2) {
                                                 try self.expandLifetimeWithNode(arg, arg2);
                                                 break;
@@ -553,8 +554,8 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
             try self.checkNodeLifetime(target, scope_level);
         },
         .@"return" => |return_expr| {
-            const current_blocks1 = try self.current_blocks.clone();
-            try self.compiler.exiting_blocks.put(node_id, current_blocks1);
+            const current_blocks_copy = try self.current_blocks.clone();
+            try self.compiler.exiting_blocks.put(node_id, current_blocks_copy);
             if (return_expr) |ret_expr| {
                 try self.expandLifetime(ret_expr, ret_expr, .{ .@"return" = Parser.Void.void });
                 try self.checkNodeLifetime(ret_expr, scope_level);

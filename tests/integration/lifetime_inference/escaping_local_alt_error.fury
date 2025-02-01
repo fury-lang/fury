@@ -5,7 +5,7 @@ struct Stats {
 }
 
 fun foo() -> Stats {
-    return new(local) Stats(age: 100)
+    return init(local) Stats(age: 100)
 }
 
 fun main() {

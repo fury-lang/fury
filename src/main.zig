@@ -25,11 +25,11 @@ pub fn main() !void {
     const source = try alloc.alloc(u8, file_size);
     _ = try file.read(source);
 
-    var compiler = Compiler.new(alloc);
+    var compiler = Compiler.init(alloc);
     const span_offset = compiler.spanOffset();
     try compiler.addFile(file_name);
 
-    var parser = Parser.new(alloc, compiler, span_offset);
+    var parser = Parser.init(alloc, compiler, span_offset);
     compiler = try parser.parse();
 
     // if (c.errors.items.len == 0) c.print();
@@ -41,7 +41,7 @@ pub fn main() !void {
 
     if (compiler.errors.items.len != 0) return;
 
-    var typechecker = try Typechecker.new(alloc, compiler);
+    var typechecker = try Typechecker.init(alloc, compiler);
     defer typechecker.deinit();
     compiler = try typechecker.typecheck();
     // if (compiler.errors.items.len == 0) compiler.print();
@@ -52,7 +52,7 @@ pub fn main() !void {
 
     if (compiler.errors.items.len != 0) return;
 
-    var lifetime_checker = try LifetimeChecker.new(alloc, compiler);
+    var lifetime_checker = try LifetimeChecker.init(alloc, compiler);
     defer lifetime_checker.deinit();
     compiler = try lifetime_checker.checkLifetimes();
 
@@ -64,7 +64,7 @@ pub fn main() !void {
 
     if (compiler.errors.items.len != 0) return;
 
-    var codegen = try Codegen.new(alloc, compiler);
+    var codegen = try Codegen.init(alloc, compiler);
     defer compiler.deinit();
     const output = try codegen.codegen();
 

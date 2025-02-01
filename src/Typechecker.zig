@@ -101,7 +101,7 @@ pub const Param = struct {
     name: []const u8,
     var_id: VarId,
 
-    pub fn new(name: []const u8, var_id: VarId) Param {
+    pub fn init(name: []const u8, var_id: VarId) Param {
         return Param{ .name = name, .var_id = var_id };
     }
 };
@@ -110,7 +110,7 @@ pub const TypeParam = struct {
     name: []const u8,
     type_id: TypeId,
 
-    pub fn new(name: []const u8, type_id: TypeId) TypeParam {
+    pub fn init(name: []const u8, type_id: TypeId) TypeParam {
         return TypeParam{ .name = name, .type_id = type_id };
     }
 };
@@ -149,7 +149,7 @@ pub const Scope = struct {
     move_owned_values: std.AutoHashMap(VarId, Parser.NodeId),
     allow_unsafe: bool,
 
-    pub fn new(alloc: std.mem.Allocator) Scope {
+    pub fn init(alloc: std.mem.Allocator) Scope {
         return Scope{
             .modules = std.StringHashMap(ModuleId).init(alloc),
             .variables = std.StringHashMap(VarId).init(alloc),
@@ -213,7 +213,7 @@ pub const C_VOID_PTR_TYPE_ID: TypeId = 8;
 pub const C_CHAR_TYPE_ID: TypeId = 9;
 pub const C_STRING_TYPE_ID: TypeId = 10;
 
-pub fn new(alloc: std.mem.Allocator, compiler: Compiler) !Typechecker {
+pub fn init(alloc: std.mem.Allocator, compiler: Compiler) !Typechecker {
     var typechecker = Typechecker{
         .alloc = alloc,
         .compiler = compiler,
@@ -260,7 +260,7 @@ pub fn new(alloc: std.mem.Allocator, compiler: Compiler) !Typechecker {
     try typechecker.compiler.types.append(Type{ .c_string = Void.void });
 
     var scope = std.ArrayList(Scope).init(alloc);
-    try scope.append(Scope.new(alloc));
+    try scope.append(Scope.init(alloc));
 
     const last = scope.items.len - 1;
     try scope.items[last].functions.put("println", 0);
@@ -505,21 +505,21 @@ pub fn typecheckCallWithFunId(self: *Typechecker, name: Parser.NodeId, fun_id: F
     const params = fun.params;
     const return_type = fun.return_type;
 
-    var _args: std.ArrayList(Parser.NodeId) = undefined;
+    var fun_args: std.ArrayList(Parser.NodeId) = undefined;
     if (method_target) |method| {
         var output = std.ArrayList(Parser.NodeId).init(self.alloc);
         try output.append(method);
         try output.appendSlice(args.*.items);
-        _args = output;
+        fun_args = output;
     } else {
-        _args = args.*;
+        fun_args = args.*;
     }
 
     if (fun_id == 0) {
         // Just for now, special-case println
         try self.compiler.call_resolution.put(name, Compiler.CallTarget{ .function = fun_id });
 
-        for (_args.items) |arg| {
+        for (fun_args.items) |arg| {
             // TODO add name-checking
             _ = try self.typecheckNode(arg, local_inferences);
         }
@@ -527,8 +527,8 @@ pub fn typecheckCallWithFunId(self: *Typechecker, name: Parser.NodeId, fun_id: F
         return VOID_TYPE_ID;
     }
 
-    if (_args.items.len != params.items.len) {
-        const error_msg = try std.fmt.allocPrint(self.alloc, "expected {d} args, found {d}", .{ params.items.len, _args.items.len });
+    if (fun_args.items.len != params.items.len) {
+        const error_msg = try std.fmt.allocPrint(self.alloc, "expected {d} args, found {d}", .{ params.items.len, fun_args.items.len });
         try self.@"error"(error_msg, name);
 
         return return_type;
@@ -545,16 +545,16 @@ pub fn typecheckCallWithFunId(self: *Typechecker, name: Parser.NodeId, fun_id: F
     }
 
     var type_var_replacements = std.AutoHashMap(TypeId, TypeId).init(self.alloc);
-    try self.typecheckCallHelper(&_args, params, method_target, local_inferences, &type_var_replacements);
+    try self.typecheckCallHelper(&fun_args, params, method_target, local_inferences, &type_var_replacements);
 
-    var _fun_id = fun_id;
+    var func_id = fun_id;
     if (!(type_var_replacements.count() == 0)) {
-        _fun_id = try self.instantiateGenericFun(fun_id, &type_var_replacements);
+        func_id = try self.instantiateGenericFun(fun_id, &type_var_replacements);
     }
 
     // TODO do we want to wait until all params are checked
     // before we mark this as resolved?
-    try self.compiler.call_resolution.put(name, Compiler.CallTarget{ .function = _fun_id });
+    try self.compiler.call_resolution.put(name, Compiler.CallTarget{ .function = func_id });
 
     if (method_target) |_| {
         self.exitScope();
@@ -577,24 +577,24 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
         const arg_node = self.compiler.getNode(arg);
         switch (arg_node) {
             .named_value => |named_value| {
-                const _name = named_value.name;
-                const _value = named_value.value;
+                const name_slice = named_value.name;
+                const name_value = named_value.value;
 
                 // Set up expected type for inference. Note: if we find concrete values
                 // this inference type will be replaced by the concrete type.
-                self.compiler.setNodeType(_value, self.compiler.getVariable(params.items[idx].var_id).ty);
+                self.compiler.setNodeType(name_value, self.compiler.getVariable(params.items[idx].var_id).ty);
 
                 // If this is a method, we've already checked the first argument (aka
                 // the target of the method)
-                var arg_ty = try self.typecheckNode(_value, local_inferences);
+                var arg_ty = try self.typecheckNode(name_value, local_inferences);
                 if (idx == 0 and method_target != null) {
-                    arg_ty = self.compiler.getNodeType(_value);
+                    arg_ty = self.compiler.getNodeType(name_value);
                 }
 
-                try self.maybeMoveVariable(_value, local_inferences);
+                try self.maybeMoveVariable(name_value, local_inferences);
 
-                if (self.compiler.getVariable(params.items[idx].var_id).is_mutable and !self.isBindingMutable(_value)) {
-                    try self.@"error"("argument to function needs to be mutable", _value);
+                if (self.compiler.getVariable(params.items[idx].var_id).is_mutable and !self.isBindingMutable(name_value)) {
+                    try self.@"error"("argument to function needs to be mutable", name_value);
                     // TODO add a note
                 }
 
@@ -607,15 +607,15 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                     const expected_type = self.compiler.resolveType(arg_ty, local_inferences);
                     const found_type = self.compiler.resolveType(variable_ty, local_inferences);
                     const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ try self.compiler.prettyType(expected_type), try self.compiler.prettyType(found_type) });
-                    try self.@"error"(error_msg, _value);
+                    try self.@"error"(error_msg, name_value);
 
                     // TODO add a note about where params are defined
                 }
 
-                const arg_name = self.compiler.getSource(_name);
+                const arg_name = self.compiler.getSource(name_slice);
                 if (!std.mem.eql(u8, arg_name, params.items[idx].name)) {
                     const error_msg = try std.fmt.allocPrint(self.alloc, "expected name {s}", .{params.items[idx].name});
-                    try self.@"error"(error_msg, _name);
+                    try self.@"error"(error_msg, name_slice);
                     // TODO add a note about where param is defined
                 }
             },
@@ -702,38 +702,38 @@ pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params:
     try self.enterScope();
 
     if (type_params) |ty_params| {
-        const _ty_params = self.compiler.getNode(ty_params);
-        if (!std.mem.eql(u8, @tagName(_ty_params), "params")) {
+        const params_list = self.compiler.getNode(ty_params);
+        if (!std.mem.eql(u8, @tagName(params_list), "params")) {
             @panic("internal error: enum generic params are not proper ast node");
         }
 
-        const new_ty_params = try _ty_params.params.clone();
+        const new_ty_params = try params_list.params.clone();
         for (new_ty_params.items) |ty_param| {
             const new_ty_id = try self.compiler.freshTypeVariable(ty_param);
             const type_var_name = self.compiler.getSource(ty_param);
 
-            try fun_type_params.append(TypeParam.new(type_var_name, new_ty_id));
+            try fun_type_params.append(TypeParam.init(type_var_name, new_ty_id));
             try self.addTypeToScope(type_var_name, new_ty_id);
         }
     }
 
-    const _params = self.compiler.getNode(params);
-    switch (_params) {
+    const params_node = self.compiler.getNode(params);
+    switch (params_node) {
         .params => |pm| {
             for (pm.items) |unchecked_param| {
-                const _param = self.compiler.getNode(unchecked_param);
-                switch (_param) {
+                const param = self.compiler.getNode(unchecked_param);
+                switch (param) {
                     .param => |p| {
-                        const _name = p.name;
-                        const _param_name = self.compiler.getSource(_name);
+                        const param_name = p.name;
+                        const param_name_slice = self.compiler.getSource(param_name);
                         const ty = p.ty;
                         const is_mutable = p.is_mutable;
 
                         const tt = try self.typecheckTypename(ty);
 
-                        const var_id = try self.defineVariable(_name, tt, is_mutable, _name);
-                        self.compiler.setNodeType(_name, tt);
-                        try fun_params.append(Param.new(_param_name, var_id));
+                        const var_id = try self.defineVariable(param_name, tt, is_mutable, param_name);
+                        self.compiler.setNodeType(param_name, tt);
+                        try fun_params.append(Param.init(param_name_slice, var_id));
                     },
                     else => try self.@"error"("expected function parameter", unchecked_param),
                 }
@@ -784,9 +784,9 @@ pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params:
         }
     }
 
-    var _return_ty = VOID_TYPE_ID;
-    if (return_ty) |ret_ty| {
-        _return_ty = try self.typecheckTypename(ret_ty);
+    var ret_ty = VOID_TYPE_ID;
+    if (return_ty) |ty| {
+        ret_ty = try self.typecheckTypename(ty);
     }
 
     self.exitScope();
@@ -798,7 +798,7 @@ pub fn typecheckFunPredecl(self: *Typechecker, name: Parser.NodeId, type_params:
         .type_params = fun_type_params,
         .inference_vars = std.ArrayList(TypeId).init(self.alloc),
         .return_node = return_ty,
-        .return_type = _return_ty,
+        .return_type = ret_ty,
         .initial_node_id = initial_node_id,
         .body = block,
         .is_extern = is_extern,
@@ -868,11 +868,11 @@ pub fn typecheckFun(self: *Typechecker, fun_id: FuncId) !void {
 }
 
 pub fn typecheckEnum(self: *Typechecker, typename: Parser.NodeId, cases: std.ArrayList(Parser.NodeId), methods: std.ArrayList(Parser.NodeId)) !TypeId {
-    var _name: Parser.NodeId = undefined;
+    var type_name: Parser.NodeId = undefined;
     var params: ?Parser.NodeId = null;
     switch (self.compiler.getNode(typename)) {
         .type => |ty| {
-            _name = ty.name;
+            type_name = ty.name;
             params = ty.params;
         },
         else => {
@@ -884,16 +884,16 @@ pub fn typecheckEnum(self: *Typechecker, typename: Parser.NodeId, cases: std.Arr
 
     try self.enterScope();
 
-    if (params) |pr| {
-        var _params = std.ArrayList(Parser.NodeId).init(self.alloc);
-        switch (self.compiler.getNode(pr)) {
+    if (params) |list| {
+        var params_list = std.ArrayList(Parser.NodeId).init(self.alloc);
+        switch (self.compiler.getNode(list)) {
             .params => |p| {
-                _params = p;
+                params_list = p;
             },
             else => @panic("internal error: enum does not have type as name"),
         }
 
-        for (_params.items) |param| {
+        for (params_list.items) |param| {
             const type_id = try self.compiler.freshTypeVariable(param);
 
             try generic_params.append(type_id);
@@ -903,7 +903,7 @@ pub fn typecheckEnum(self: *Typechecker, typename: Parser.NodeId, cases: std.Arr
         }
     }
 
-    const enum_name = self.compiler.getSource(_name);
+    const enum_name = self.compiler.getSource(type_name);
 
     var output_cases = std.ArrayList(EnumVariant).init(self.alloc);
     for (cases.items) |enum_case| {
@@ -1009,11 +1009,11 @@ pub fn typecheckEnum(self: *Typechecker, typename: Parser.NodeId, cases: std.Arr
 
 pub fn typecheckStruct(self: *Typechecker, typename: Parser.NodeId, fields: std.ArrayList(Parser.NodeId), methods: std.ArrayList(Parser.NodeId), explicit_no_alloc: bool, base_class: ?Parser.NodeId) !TypeId {
     const node_type = self.compiler.getNode(typename);
-    var _name: Parser.NodeId = undefined;
+    var type_name: Parser.NodeId = undefined;
     var params: ?Parser.NodeId = null;
     switch (node_type) {
         .type => |ty| {
-            _name = ty.name;
+            type_name = ty.name;
             params = ty.params;
         },
         else => @panic("internal error: struct does not have type as name"),
@@ -1024,16 +1024,16 @@ pub fn typecheckStruct(self: *Typechecker, typename: Parser.NodeId, fields: std.
 
     try self.enterScope();
 
-    if (params) |p| {
-        var _params = std.ArrayList(Parser.NodeId).init(self.alloc);
-        switch (self.compiler.getNode(p)) {
+    if (params) |list| {
+        var params_list = std.ArrayList(Parser.NodeId).init(self.alloc);
+        switch (self.compiler.getNode(list)) {
             .params => |pr| {
-                _params = pr;
+                params_list = pr;
             },
             else => @panic("internal error: struct generic params are not proper ast node"),
         }
 
-        for (_params.items) |param| {
+        for (params_list.items) |param| {
             const type_id = try self.compiler.freshTypeVariable(param);
 
             // be conservative and assume generic parameters might be pointers
@@ -1045,7 +1045,7 @@ pub fn typecheckStruct(self: *Typechecker, typename: Parser.NodeId, fields: std.
         }
     }
 
-    const struct_name = self.compiler.getSource(_name);
+    const struct_name = self.compiler.getSource(type_name);
 
     const type_id = try self.compiler.pushType(.{
         .@"struct" = .{
@@ -1107,25 +1107,25 @@ pub fn typecheckStruct(self: *Typechecker, typename: Parser.NodeId, fields: std.
         var fun_ids = std.ArrayList(FuncId).init(self.alloc);
         var virtual_fun_ids = std.ArrayList(FuncId).init(self.alloc);
 
-        var _name0: Parser.NodeId = undefined;
-        var _type_params: ?Parser.NodeId = null;
-        var _params: Parser.NodeId = undefined;
+        var fun_name: Parser.NodeId = undefined;
+        var fun_type_params: ?Parser.NodeId = null;
+        var fun_params: Parser.NodeId = undefined;
         var lifetime_annotations = std.ArrayList(Parser.NodeId).init(self.alloc);
         var return_ty: ?Parser.NodeId = null;
         var initial_node_id: ?Parser.NodeId = null;
-        var _block: ?Parser.NodeId = null;
-        var _is_external = false;
+        var fun_block: ?Parser.NodeId = null;
+        var fun_is_external = false;
         for (methods.items) |method| {
             switch (self.compiler.getNode(method)) {
                 .fun => |f| {
-                    _name0 = f.name;
-                    _type_params = f.type_params;
-                    _params = f.params;
+                    fun_name = f.name;
+                    fun_type_params = f.type_params;
+                    fun_params = f.params;
                     lifetime_annotations = f.lifetime_annotations;
                     return_ty = f.return_ty;
                     initial_node_id = f.initial_node_id;
-                    _block = f.block;
-                    _is_external = f.is_extern;
+                    fun_block = f.block;
+                    fun_is_external = f.is_extern;
                 },
                 else => {
                     try self.@"error"("internal error: can't find method definition during typecheck", method);
@@ -1133,9 +1133,9 @@ pub fn typecheckStruct(self: *Typechecker, typename: Parser.NodeId, fields: std.
                 },
             }
 
-            const fun_id = try self.typecheckFunPredecl(_name0, _type_params, _params, &lifetime_annotations, return_ty, initial_node_id, _block, _is_external);
+            const fun_id = try self.typecheckFunPredecl(fun_name, fun_type_params, fun_params, &lifetime_annotations, return_ty, initial_node_id, fun_block, fun_is_external);
 
-            if (_block == null and !_is_external) {
+            if (fun_block == null and !fun_is_external) {
                 try virtual_fun_ids.append(fun_id);
             } else {
                 try fun_ids.append(fun_id);
@@ -1154,13 +1154,13 @@ pub fn typecheckStruct(self: *Typechecker, typename: Parser.NodeId, fields: std.
 
             try self.compiler.base_classes.put(type_id, base_classes);
 
-            const _methods = self.compiler.methodsOnType(class);
+            const ty_methods = self.compiler.methodsOnType(class);
             const virtual_methods = self.compiler.virtualMethodsOnType(class);
 
             // TODO: proper equality for methods, have some way to check equality between two functions to see if one is an implementation of the other
             var implemented_methods = std.ArrayList([]const u8).init(self.alloc);
 
-            for (_methods.items) |method| {
+            for (ty_methods.items) |method| {
                 const fun = self.compiler.functions.items[method];
                 const method_name = self.compiler.getSource(fun.name);
                 try implemented_methods.append(method_name);
@@ -1353,8 +1353,8 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
             try self.maybeMoveVariable(initializer, local_inferences);
 
             var var_id: VarId = undefined;
-            if (ty) |_ty| {
-                const tt = try self.typecheckTypename(_ty);
+            if (ty) |let_ty| {
+                const tt = try self.typecheckTypename(let_ty);
                 if (!self.unifyTypes(tt, initializer_type, local_inferences)) {
                     const error_msg = try std.fmt.allocPrint(self.alloc, "initializer and given type do not match (expected: {s}, found: {s})", .{ try self.compiler.prettyType(tt), try self.compiler.prettyType(initializer_type) });
                     try self.@"error"(error_msg, initializer);
@@ -1370,7 +1370,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                 }
             } else {
                 const node_type_id = self.compiler.getNodeType(variable_name);
-                var _ty: TypeId = undefined;
+                var let_ty: TypeId = undefined;
                 switch (node_type_id) {
                     UNKNOWN_TYPE_ID => {
                         const tt = try self.compiler.findOrCreateType(.{
@@ -1380,18 +1380,18 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                         try local_inferences.*.append(UNKNOWN_TYPE_ID);
                         self.compiler.setNodeType(variable_name, tt);
 
-                        _ty = tt;
+                        let_ty = tt;
                     },
                     else => {
-                        _ty = node_type_id;
+                        let_ty = node_type_id;
                     },
                 }
 
-                var tt = self.compiler.resolveType(_ty, local_inferences);
+                var tt = self.compiler.resolveType(let_ty, local_inferences);
                 if (tt == UNKNOWN_TYPE_ID) {
-                    tt = _ty;
+                    tt = let_ty;
                 } else {
-                    tt = self.compiler.resolveType(_ty, local_inferences);
+                    tt = self.compiler.resolveType(let_ty, local_inferences);
                 }
 
                 if (!self.unifyTypes(tt, initializer_type, local_inferences)) {
@@ -1524,7 +1524,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
             switch (self.compiler.getType(type_id)) {
                 .@"struct" => |s| {
                     for (s.fields.items) |type_field| {
-                        const _type_id = type_field.ty;
+                        const field_type_id = type_field.ty;
 
                         if (std.mem.eql(u8, field_name, type_field.name)) {
                             if (type_field.member_access == Parser.MemberAccess.Private and !std.mem.eql(u8, target_name, ".") and !std.mem.eql(u8, target_name, "self")) {
@@ -1532,9 +1532,9 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                                 try self.@"error"("access of private field", field);
                             }
 
-                            self.compiler.setNodeType(node_id, _type_id);
-                            self.compiler.setNodeType(field, _type_id);
-                            return _type_id;
+                            self.compiler.setNodeType(node_id, field_type_id);
+                            self.compiler.setNodeType(field, field_type_id);
+                            return field_type_id;
                         }
                     }
 
@@ -1593,10 +1593,10 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
             _ = try self.typecheckNode(stmt, local_inferences);
             node_type = VOID_TYPE_ID;
         },
-        .new => |_new| {
-            const allocation_type = _new.pointer_type;
-            const allocation_node_id = _new.allocated;
-            node_type = try self.typecheckNew(allocation_type, allocation_node_id, local_inferences);
+        .new => |new_expr| {
+            const allocation_type = new_expr.pointer_type;
+            const allocation_node_id = new_expr.allocated;
+            node_type = try self.typecheckinit(allocation_type, allocation_node_id, local_inferences);
         },
         .@"return" => |ret| {
             const expected_type = self.findExpectedReturnType();
@@ -1893,10 +1893,10 @@ pub fn typecheckLvalue(self: *Typechecker, lvalue: Parser.NodeId, local_inferenc
                 .@"struct" => |s| {
                     for (s.fields.items) |type_field| {
                         const mem_access = type_field.member_access;
-                        const _name = type_field.name;
+                        const type_name = type_field.name;
                         const ty = type_field.ty;
 
-                        if (std.mem.eql(u8, _name, field_name)) {
+                        if (std.mem.eql(u8, type_name, field_name)) {
                             if (mem_access == Parser.MemberAccess.Private and !std.mem.eql(u8, target_name, ".") and !std.mem.eql(u8, target_name, "self")) {
                                 // Private and not accessing 'self'
                                 try self.@"error"("modifying private member field", field);
@@ -2008,8 +2008,8 @@ pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {
                             return false;
                         }
                     },
-                    .@"struct" => |_struct| {
-                        for (_struct.params.items) |param_type| {
+                    .@"struct" => |s| {
+                        for (s.params.items) |param_type| {
                             if (!self.typeIsOwned(param_type.ty)) {
                                 return false;
                             }
@@ -2024,7 +2024,7 @@ pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {
     }
 }
 
-pub fn typecheckNew(self: *Typechecker, pointer_type: Parser.PointerType, node_id: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
+pub fn typecheckinit(self: *Typechecker, pointer_type: Parser.PointerType, node_id: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
     switch (self.compiler.getNode(node_id)) {
         .call => |call| {
             const head = call.head;
@@ -2076,10 +2076,10 @@ pub fn typecheckNew(self: *Typechecker, pointer_type: Parser.PointerType, node_i
                     arg_label: for (args.items) |arg| {
                         switch (self.compiler.getNode(arg)) {
                             .named_value => |nval| {
-                                const _name = nval.name;
-                                const _value = nval.value;
+                                const name_slice = nval.name;
+                                const name_value = nval.value;
 
-                                const field_name = self.compiler.getSource(_name);
+                                const field_name = self.compiler.getSource(name_slice);
 
                                 for (fields.items) |type_field| {
                                     if (std.mem.eql(u8, field_name, type_field.name)) {
@@ -2091,17 +2091,17 @@ pub fn typecheckNew(self: *Typechecker, pointer_type: Parser.PointerType, node_i
                                             if (result) |scope_type_id| {
                                                 if (scope_type_id != type_id.?) {
                                                     // FIXME: add a hint to say you need to create your own constructor
-                                                    try self.@"error"("'new' used on private member field from outside struct or class", _name);
+                                                    try self.@"error"("'new' used on private member field from outside struct or class", name_slice);
                                                 }
                                             } else {
-                                                try self.@"error"("'new' used on private member field from outside struct or class", _name);
+                                                try self.@"error"("'new' used on private member field from outside struct or class", name_slice);
                                             }
                                         }
 
                                         const known_field_type = type_field.ty;
 
                                         if (self.compiler.isTypeVariable(known_field_type)) {
-                                            const value_type = try self.typecheckNode(_value, local_inferences);
+                                            const value_type = try self.typecheckNode(name_value, local_inferences);
 
                                             try replacements.put(
                                                 self.compiler.getUnderlyingTypeId(known_field_type),
@@ -2112,25 +2112,25 @@ pub fn typecheckNew(self: *Typechecker, pointer_type: Parser.PointerType, node_i
 
                                             // Set up expected type for inference. Note: if we find concrete values
                                             // this inference type will be replaced by the concrete type.
-                                            self.compiler.setNodeType(_value, value_type);
+                                            self.compiler.setNodeType(name_value, value_type);
                                         } else {
                                             self.compiler.setNodeType(arg, known_field_type);
 
                                             // Set up expected type for inference. Note: if we find concrete values
                                             // this inference type will be replaced by the concrete type.
-                                            self.compiler.setNodeType(_value, known_field_type);
+                                            self.compiler.setNodeType(name_value, known_field_type);
 
-                                            const value_type = try self.typecheckNode(_value, local_inferences);
+                                            const value_type = try self.typecheckNode(name_value, local_inferences);
 
                                             if (!self.unifyTypes(known_field_type, value_type, local_inferences)) {
                                                 const error_msg = try std.fmt.allocPrint(self.alloc, "incompatible type for argument, expected: {s}, found: {s}", .{ try self.compiler.prettyType(value_type), try self.compiler.prettyType(known_field_type) });
-                                                try self.@"error"(error_msg, _value);
+                                                try self.@"error"(error_msg, name_value);
                                             }
                                         }
                                         continue :arg_label;
                                     }
                                 }
-                                try self.@"error"("unknown field", _name);
+                                try self.@"error"("unknown field", name_slice);
                                 return UNKNOWN_TYPE_ID;
                             },
                             else => {
@@ -2184,8 +2184,8 @@ pub fn typecheckNamespacedItemLookup(self: *Typechecker, namespace: Parser.NodeI
 
     switch (node) {
         .call => |call_expr| {
-            const _name = self.compiler.getSource(call_expr.head);
-            const fun_id = @constCast(&mods).scope.findFunction(_name);
+            const call_name = self.compiler.getSource(call_expr.head);
+            const fun_id = @constCast(&mods).scope.findFunction(call_name);
             if (fun_id) |f_id| {
                 return try self.typecheckCallWithFunId(call_expr.head, f_id, @constCast(&call_expr.args), null, local_inferences);
             } else {
@@ -2286,13 +2286,13 @@ pub fn typecheckNamespacedTypeLookup(self: *Typechecker, namespace: Parser.NodeI
 
                                             switch (self.compiler.getNode(arg)) {
                                                 .named_value => |named_value| {
-                                                    const name0 = named_value.name;
+                                                    const named_value_slice = named_value.name;
                                                     const value = named_value.value;
 
-                                                    const name_content = self.compiler.getSource(name0);
+                                                    const name_content = self.compiler.getSource(named_value_slice);
 
                                                     if (!std.mem.eql(u8, name_content, param_name)) {
-                                                        try self.@"error"("name mismatch in enum case", name0);
+                                                        try self.@"error"("name mismatch in enum case", named_value_slice);
                                                         return VOID_TYPE_ID;
                                                     }
 
@@ -2476,10 +2476,10 @@ pub fn typecheckMatch(self: *Typechecker, target: Parser.NodeId, match_arms: std
                                     for (variants.items, 0..) |variant, idx| {
                                         switch (variant) {
                                             .single => |single| {
-                                                const name0 = single.name;
+                                                const single_slice = single.name;
                                                 const param = single.param;
 
-                                                if (std.mem.eql(u8, name0, arm_name)) {
+                                                if (std.mem.eql(u8, single_slice, arm_name)) {
                                                     try self.compiler.call_resolution.put(arm[0], Compiler.CallTarget{
                                                         .enum_constructor = .{
                                                             .type_id = inner_type_id,
@@ -2579,7 +2579,7 @@ pub fn typecheckMatch(self: *Typechecker, target: Parser.NodeId, match_arms: std
 pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *std.AutoHashMap(TypeId, TypeId)) anyerror!TypeId {
     const fun = self.compiler.functions.items[fun_id];
 
-    const _name = fun.name;
+    const fun_name = fun.name;
     const params = try fun.params.clone();
     const new_params = try params.clone();
     const lifetime_annotations = try fun.lifetime_annotations.clone();
@@ -2588,7 +2588,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
     const return_node = fun.return_node;
     var return_type = fun.return_type;
     var initial_node_id = fun.initial_node_id;
-    var _body = fun.body;
+    var fun_body = fun.body;
     const is_extern = fun.is_extern;
 
     for (new_params.items) |*new_param| {
@@ -2630,7 +2630,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
     return_type = try self.instantiateGenericType(return_type, replacements);
 
     if (initial_node_id) |inner_initial_node_id| {
-        if (_body) |inner_body| {
+        if (fun_body) |inner_body| {
             const offset = self.compiler.numAstNodes() - inner_initial_node_id;
 
             try self.compiler.resizeNodeTypes(self.compiler.numAstNodes() + (inner_body - inner_initial_node_id + 1), UNKNOWN_TYPE_ID);
@@ -2791,12 +2791,12 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
                 try self.compiler.span_end.append(self.compiler.span_end.items[raw_node_id]);
             }
             initial_node_id = inner_initial_node_id + offset;
-            _body = inner_body + offset;
+            fun_body = inner_body + offset;
         }
     }
 
     try self.compiler.functions.append(.{
-        .name = _name,
+        .name = fun_name,
         .params = new_params,
         .lifetime_annotations = lifetime_annotations,
         .type_params = type_params,
@@ -2804,7 +2804,7 @@ pub fn instantiateGenericFun(self: *Typechecker, fun_id: FuncId, replacements: *
         .return_node = return_node,
         .return_type = return_type,
         .initial_node_id = initial_node_id,
-        .body = _body,
+        .body = fun_body,
         .is_extern = is_extern,
     });
 
@@ -2972,24 +2972,24 @@ pub fn typecheckVarOrFunction(self: *Typechecker, node_id: Parser.NodeId, var_or
 }
 
 pub fn typecheckModule(self: *Typechecker, path: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) !TypeId {
-    var _block: Parser.NodeId = undefined;
+    var module_block: Parser.NodeId = undefined;
     if (self.compiler.module_lookup_use.get(path)) |b| {
-        _block = b;
+        module_block = b;
     } else {
         @panic("all paths should have valid module blocks associated with them");
     }
 
-    if (self.compiler.module_resolution.contains(_block)) {
+    if (self.compiler.module_resolution.contains(module_block)) {
         return VOID_TYPE_ID;
     } else {
-        const block_id = self.compiler.getNode(_block);
+        const block_id = self.compiler.getNode(module_block);
         switch (block_id) {
             .block => |b_id| {
-                const scope = try self.typecheckBlock(_block, b_id, local_inferences);
+                const scope = try self.typecheckBlock(module_block, b_id, local_inferences);
                 const module = Module{ .scope = scope };
-                const module_id = try self.compiler.addModule(_block, module);
+                const module_id = try self.compiler.addModule(module_block, module);
                 // for now it's just a simple identifer(ex: use utils)
-                const file_path = self.compiler.getSourcePath(_block);
+                const file_path = self.compiler.getSourcePath(module_block);
                 try self.addModuleToScope(file_path, module_id);
                 return VOID_TYPE_ID;
             },
@@ -3228,7 +3228,7 @@ pub fn @"error"(self: *Typechecker, message: []const u8, node_id: Parser.NodeId)
 }
 
 pub fn enterScope(self: *Typechecker) !void {
-    try self.scope.append(Scope.new(self.alloc));
+    try self.scope.append(Scope.init(self.alloc));
 }
 
 pub fn exitScope(self: *Typechecker) void {

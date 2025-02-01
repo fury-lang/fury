@@ -67,11 +67,11 @@ test "Tests coverage" {
             @panic("test should have an \"output: \" or \"error: \" test configuration comment");
         }
 
-        var compiler = Compiler.new(alloc);
+        var compiler = Compiler.init(alloc);
         const span_offset = compiler.spanOffset();
         try compiler.addFile(file_path);
 
-        var parser = Parser.new(alloc, compiler, span_offset);
+        var parser = Parser.init(alloc, compiler, span_offset);
         var c = try parser.parse();
 
         if (c.errors.items.len > 0) {
@@ -85,7 +85,7 @@ test "Tests coverage" {
             continue;
         }
 
-        var typechecker = try Typechecker.new(alloc, c);
+        var typechecker = try Typechecker.init(alloc, c);
         c = try typechecker.typecheck();
 
         if (c.errors.items.len > 0) {
@@ -99,7 +99,7 @@ test "Tests coverage" {
             continue;
         }
 
-        var lifetime_checker = try LifetimeChecker.new(alloc, c);
+        var lifetime_checker = try LifetimeChecker.init(alloc, c);
         c = try lifetime_checker.checkLifetimes();
 
         if (c.errors.items.len > 0) {
@@ -113,7 +113,7 @@ test "Tests coverage" {
             continue;
         }
 
-        var codegen = try Codegen.new(alloc, c);
+        var codegen = try Codegen.init(alloc, c);
         const output = try codegen.codegen();
 
         if (c.errors.items.len > 0) {

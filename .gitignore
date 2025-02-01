@@ -6,3 +6,6 @@ test.c
 test
 .vscode/
 .DS_Store
+*.a
+*.o
+*.wasm
