@@ -23,11 +23,13 @@ pub fn codegenTypename(self: *Codegen, type_id: Typechecker.TypeId, local_infere
         .@"struct" => {
             try output.appendSlice("struct struct_");
             const id = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+            defer self.alloc.free(id);
             try output.appendSlice(id);
         },
         .@"enum" => {
             try output.appendSlice("struct enum_");
             const id = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+            defer self.alloc.free(id);
             try output.appendSlice(id);
         },
         .pointer => |pt| {
@@ -37,6 +39,7 @@ pub fn codegenTypename(self: *Codegen, type_id: Typechecker.TypeId, local_infere
         .fun => {
             try output.appendSlice("fun_ty_");
             const id = try std.fmt.allocPrint(self.alloc, "{d} ", .{type_id});
+            defer self.alloc.free(id);
             try output.appendSlice(id);
         },
         .c_external_type => |c_ext| {
@@ -86,6 +89,7 @@ pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fie
 
     try output.appendSlice("struct struct_");
     const inner_type_id = try std.fmt.allocPrint(self.alloc, "{d}", .{ptr_type.pointer.target});
+    defer self.alloc.free(inner_type_id);
     try output.appendSlice(inner_type_id);
     try output.appendSlice("* allocator_");
     try output.appendSlice(inner_type_id);
@@ -99,6 +103,7 @@ pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fie
         try output.append(' ');
         try output.appendSlice("field_");
         const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+        defer self.alloc.free(f_id);
         try output.appendSlice(f_id);
         try output.appendSlice(" /*");
         try output.appendSlice(type_field.name);
@@ -125,6 +130,8 @@ pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fie
             try output.append(' ');
             const b_id = try std.fmt.allocPrint(self.alloc, "{d}", .{base_class});
             const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+            defer self.alloc.free(b_id);
+            defer self.alloc.free(f_id);
             try output.appendSlice("base_");
             try output.appendSlice(b_id);
             try output.appendSlice("_field_");
@@ -156,6 +163,7 @@ pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fie
     for (fields.*.items, 0..) |type_field, idx| {
         try output.appendSlice(", field_");
         const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+        defer self.alloc.free(f_id);
         try output.appendSlice(f_id);
         try output.appendSlice(" /* ");
         try output.appendSlice(type_field.name);
@@ -171,6 +179,8 @@ pub fn codegenAllocatorFunction(self: *Codegen, type_id: Typechecker.TypeId, fie
         for (base_type.@"struct".fields.items, 0..) |type_field, idx| {
             const b_id = try std.fmt.allocPrint(self.alloc, "{d}", .{base_class});
             const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+            defer self.alloc.free(b_id);
+            defer self.alloc.free(f_id);
             try output.appendSlice(", base_");
             try output.appendSlice(b_id);
             try output.appendSlice("_field_");
@@ -193,6 +203,7 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
     }
 
     const inner_type_id = try std.fmt.allocPrint(self.alloc, "{d}", .{ptr_type.pointer.target});
+    defer self.alloc.free(inner_type_id);
     try output.appendSlice("void initializer_");
     try output.appendSlice(inner_type_id);
     try output.appendSlice("(struct struct_");
@@ -205,6 +216,7 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
         try self.codegenTypename(type_field.ty, &local_inference, output);
         try output.appendSlice(" field_");
         const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+        defer self.alloc.free(f_id);
         try output.appendSlice(f_id);
         try output.appendSlice(" /* ");
         try output.appendSlice(type_field.name);
@@ -223,6 +235,7 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
                         try output.append(' ');
                         try output.appendSlice("base_field_");
                         const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                        defer self.alloc.free(f_id);
                         try output.appendSlice(f_id);
                         try output.appendSlice(" /* ");
                         try output.appendSlice(type_field.name);
@@ -241,6 +254,7 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
         const base_class = base_classes0.items;
         try output.appendSlice("initializer_");
         const base_id = try std.fmt.allocPrint(self.alloc, "{}", .{base_class[0]});
+        defer self.alloc.free(base_id);
         try output.appendSlice(base_id);
         try output.appendSlice("(&tmp->baseclass");
 
@@ -251,6 +265,7 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
                     for (base_type.@"struct".fields.items, 0..) |type_field, idx| {
                         try output.appendSlice(", base_field_");
                         const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                        defer self.alloc.free(f_id);
                         try output.appendSlice(f_id);
                         try output.appendSlice(" /* ");
                         try output.appendSlice(type_field.name);
@@ -272,6 +287,7 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
                         try output.appendSlice("baseclass.");
                     }
                     const vtable_struct = try std.fmt.allocPrint(self.alloc, "vtable = &vtable_struct_{s};", .{inner_type_id});
+                    defer self.alloc.free(vtable_struct);
                     try output.appendSlice(vtable_struct);
                 }
             }
@@ -280,6 +296,7 @@ pub fn codegenInitializerFunction(self: *Codegen, type_id: Typechecker.TypeId, f
 
     for (fields.items, 0..) |type_field, idx| {
         const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+        defer self.alloc.free(f_id);
         try output.appendSlice("tmp->field_");
         try output.appendSlice(f_id);
         try output.appendSlice(" = ");
@@ -304,6 +321,7 @@ pub fn codegenUserPredecls(self: *Codegen, output: *std.ArrayList(u8)) !void {
 
                 try output.appendSlice("struct struct_");
                 const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                defer self.alloc.free(f_id);
                 try output.appendSlice(f_id);
                 try output.appendSlice(";\n");
             },
@@ -316,6 +334,7 @@ pub fn codegenUserPredecls(self: *Codegen, output: *std.ArrayList(u8)) !void {
 
                 try output.appendSlice("struct enum_");
                 const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                defer self.alloc.free(f_id);
                 try output.appendSlice(f_id);
                 try output.appendSlice(";\n");
             },
@@ -336,6 +355,7 @@ pub fn codegenUserPredecls(self: *Codegen, output: *std.ArrayList(u8)) !void {
                 try self.codegenTypename(ret, &local_inference, output);
                 try output.appendSlice("(*fun_ty_");
                 const idx_str = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                defer self.alloc.free(idx_str);
                 try output.appendSlice(idx_str);
                 // FIXME: we may not always have an allocation_id
                 try output.appendSlice(")(long");
@@ -371,6 +391,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
 
                 try output.appendSlice("struct struct_");
                 const id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                defer self.alloc.free(id);
                 try output.appendSlice(id);
                 try output.appendSlice("{\n");
 
@@ -392,6 +413,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                 if (!(virtual_methods.items.len == 0)) {
                     try output.appendSlice("const vtable_");
                     const id_str = try std.fmt.allocPrint(self.alloc, "{}", .{idx});
+                    defer self.alloc.free(id_str);
                     try output.appendSlice(id_str);
                     try output.appendSlice("* vtable;\n");
                 }
@@ -402,6 +424,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                     try output.append(' ');
                     try output.appendSlice(" field_");
                     const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{field_idx});
+                    defer self.alloc.free(f_id);
                     try output.appendSlice(f_id);
                     try output.appendSlice(" /*");
                     try output.appendSlice(type_field.name);
@@ -435,6 +458,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
 
                 try output.appendSlice("struct enum_");
                 const id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                defer self.alloc.free(id);
                 try output.appendSlice(id);
                 try output.appendSlice("{\n");
                 try output.appendSlice("int arm_id;\n");
@@ -447,6 +471,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                             try output.append(' ');
                             try output.appendSlice("case_");
                             const idx_slice = try std.fmt.allocPrint(self.alloc, "{d}", .{case_idx});
+                            defer self.alloc.free(idx_slice);
                             try output.appendSlice(idx_slice);
                             try output.appendSlice(" /*");
                             try output.appendSlice(single.name);
@@ -464,6 +489,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                                 try output.append(' ');
                                 try output.appendSlice("case_");
                                 const idx_slice = try std.fmt.allocPrint(self.alloc, "{}_{} /* ", .{ case_idx, arg_idx });
+                                defer self.alloc.free(idx_slice);
                                 try output.appendSlice(idx_slice);
                                 try output.appendSlice(arg.name);
                                 try output.appendSlice(" */ ;\n");
@@ -485,9 +511,11 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                     try self.codegenTypename(idx, &local_inference, output);
                     try output.appendSlice("* enum_case_");
                     const id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                    defer self.alloc.free(id_str);
                     try output.appendSlice(id_str);
                     try output.append('_');
                     const case_off = try std.fmt.allocPrint(self.alloc, "{d}", .{case_offset});
+                    defer self.alloc.free(case_off);
                     try output.appendSlice(case_off);
                     try output.appendSlice("(int allocation_id");
 
@@ -506,6 +534,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                                 try output.append(' ');
                                 try output.appendSlice("case_");
                                 const case_idx_slice = try std.fmt.allocPrint(self.alloc, "{}_{} /* ", .{ case_offset, param_idx });
+                                defer self.alloc.free(case_idx_slice);
                                 try output.appendSlice(case_idx_slice);
                                 try output.appendSlice(param.name);
                                 try output.appendSlice(" */ ");
@@ -522,11 +551,13 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                     try self.codegenTypename(idx, &local_inference1, output);
                     try output.appendSlice("*)allocate(allocator, sizeof(struct enum_");
                     const idx_slice = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                    defer self.alloc.free(idx_slice);
                     try output.appendSlice(idx_slice);
                     try output.appendSlice("), allocation_id);\n");
 
                     try output.appendSlice("tmp->arm_id = \n");
                     const case_off0 = try std.fmt.allocPrint(self.alloc, "{d}", .{case_offset});
+                    defer self.alloc.free(case_off0);
                     try output.appendSlice(case_off0);
                     try output.appendSlice(";\n");
 
@@ -534,6 +565,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                         .single => |single| {
                             try output.appendSlice("tmp->case_");
                             const case_off_str = try std.fmt.allocPrint(self.alloc, "{d}", .{case_offset});
+                            defer self.alloc.free(case_off_str);
                             try output.appendSlice(case_off_str);
                             try output.appendSlice(" = ");
                             try output.appendSlice("arg; /* ");
@@ -543,9 +575,11 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                         .@"struct" => |s| {
                             for (s.params.items, 0..) |param, param_idx| {
                                 const tmp = try std.fmt.allocPrint(self.alloc, "tmp->case_{}_{}", .{ case_offset, param_idx });
+                                defer self.alloc.free(tmp);
                                 try output.appendSlice(tmp);
                                 try output.appendSlice(" = ");
                                 const c = try std.fmt.allocPrint(self.alloc, "case_{}_{}; /*", .{ case_offset, param_idx });
+                                defer self.alloc.free(c);
                                 try output.appendSlice(c);
                                 try output.appendSlice(param.name);
                                 try output.appendSlice(" */\n");
@@ -569,6 +603,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                 try self.codegenTypename(inner_type_id, &local_inference, output);
                 try output.appendSlice("* create_buffer_");
                 const idx_str = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                defer self.alloc.free(idx_str);
                 try output.appendSlice(idx_str);
                 try output.appendSlice("(int level, int count, ...)\n{\n");
                 var local_inference1 = std.ArrayList(Typechecker.TypeId).init(self.alloc);
@@ -605,6 +640,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
                 try self.codegenTypename(ret, &local_inference, output);
                 try output.appendSlice("(*fun_ty_");
                 const idx_str = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                defer self.alloc.free(idx_str);
                 try output.appendSlice(idx_str);
                 // FIXME: we may not always have an allocation_id
                 try output.appendSlice(")(long");
@@ -624,6 +660,7 @@ pub fn codegenUserTypes(self: *Codegen, output: *std.ArrayList(u8)) !void {
 pub fn codegenVtableDecl(self: *Codegen, type_id: usize, virtual_methods: *std.ArrayList(Typechecker.FuncId), output: *std.ArrayList(u8)) !void {
     try output.appendSlice("struct vtable_");
     const id = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+    defer self.alloc.free(id);
     try output.appendSlice(id);
     try output.appendSlice("{\n");
 
@@ -643,12 +680,14 @@ pub fn codegenVtableDecl(self: *Codegen, type_id: usize, virtual_methods: *std.A
             try output.append(' ');
             try output.appendSlice("variable_");
             const param_id = try std.fmt.allocPrint(self.alloc, "{d}", .{param.var_id});
+            defer self.alloc.free(param_id);
             try output.appendSlice(param_id);
         }
         try output.appendSlice(");\n");
     }
 
     const type_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+    defer self.alloc.free(type_id_str);
     try output.appendSlice("};\n");
     try output.appendSlice("typedef struct vtable_");
     try output.appendSlice(type_id_str);
@@ -664,6 +703,7 @@ pub fn codegenVirtFunctionTypedefs(self: *Codegen, virtual_methods: *std.ArrayLi
         try self.codegenTypename(fun.return_type, @constCast(&fun.inference_vars), output);
         try output.appendSlice(" (*virt_fun_ty_");
         const idx_str = try std.fmt.allocPrint(self.alloc, "{d}", .{method});
+        defer self.alloc.free(idx_str);
         try output.appendSlice(idx_str);
         try output.appendSlice(")(");
         try output.appendSlice("long allocation_id");
@@ -676,6 +716,7 @@ pub fn codegenVirtFunctionTypedefs(self: *Codegen, virtual_methods: *std.ArrayLi
             try output.append(' ');
             try output.appendSlice("variable_");
             const param_id = try std.fmt.allocPrint(self.alloc, "{d}", .{param.var_id});
+            defer self.alloc.free(param_id);
             try output.appendSlice(param_id);
         }
         try output.appendSlice(");\n");
@@ -705,6 +746,8 @@ pub fn codegenVtableInstantiation(self: *Codegen, base_classes: *std.ArrayList(T
 
         const base_id = try std.fmt.allocPrint(self.alloc, "{d}", .{base_class});
         const type_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+        defer self.alloc.free(base_id);
+        defer self.alloc.free(type_id_str);
         try output.appendSlice("static const vtable_");
         try output.appendSlice(base_id);
         try output.appendSlice(" vtable_struct_");
@@ -724,6 +767,8 @@ pub fn codegenVtableInstantiation(self: *Codegen, base_classes: *std.ArrayList(T
 
             const method_id = try std.fmt.allocPrint(self.alloc, "{d}", .{method});
             const virt_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{virt_fun_id});
+            defer self.alloc.free(method_id);
+            defer self.alloc.free(virt_id_str);
             try output.appendSlice("    .");
             try output.appendSlice(fun_name);
             try output.appendSlice(" = (virt_fun_ty_");
@@ -753,6 +798,7 @@ pub fn codegenVtableMethodPredecls(self: *Codegen, base_classes: *std.ArrayList(
         const method_name = self.compiler.getSource(fun.name);
         if (base_virtual_method_names.contains(method_name)) {
             const method_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{method});
+            defer self.alloc.free(method_id_str);
             try output.appendSlice("void /* ");
             try output.appendSlice(method_name);
             try output.appendSlice(" */ function_");
@@ -766,6 +812,7 @@ pub fn codegenVtableMethodPredecls(self: *Codegen, base_classes: *std.ArrayList(
                 try output.append(' ');
                 try output.appendSlice("variable_");
                 const param_id = try std.fmt.allocPrint(self.alloc, "{d}", .{param.var_id});
+                defer self.alloc.free(param_id);
                 try output.appendSlice(param_id);
             }
             try output.appendSlice(");");
@@ -787,6 +834,7 @@ pub fn codegenFunSignature(self: *Codegen, fun_id: Typechecker.FuncId, params: *
 
         try output.appendSlice("function_");
         const idx_str = try std.fmt.allocPrint(self.alloc, "{d}", .{fun_id});
+        defer self.alloc.free(idx_str);
         try output.appendSlice(idx_str);
         try output.append('(');
 
@@ -808,6 +856,7 @@ pub fn codegenFunSignature(self: *Codegen, fun_id: Typechecker.FuncId, params: *
         try output.appendSlice("variable_");
 
         const var_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{param.var_id});
+        defer self.alloc.free(var_id_str);
         try output.appendSlice(var_id_str);
     }
 
@@ -819,10 +868,12 @@ pub fn codegenAnnotation(self: *Codegen, node_id: Parser.NodeId, output: *std.Ar
         .@"return" => try output.appendSlice("allocation_id"),
         .param => |param| {
             const free_str = try std.fmt.allocPrint(self.alloc, "variable_{}->__allocation_id__", .{param.var_id});
+            defer self.alloc.free(free_str);
             try output.appendSlice(free_str);
         },
         .scope => |scope| {
             const free_str = try std.fmt.allocPrint(self.alloc, "allocation_id + {}", .{scope.level});
+            defer self.alloc.free(free_str);
             try output.appendSlice(free_str);
         },
         .unknown => try output.appendSlice("/* UNKNOWN, */ "),
@@ -851,6 +902,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                 try output.appendSlice("variable_");
 
                 const var_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{var_id});
+                defer self.alloc.free(var_id_str);
                 try output.appendSlice(var_id_str);
             } else if (self.compiler.fun_resolution.get(node_id)) |fun_id| {
                 try output.appendSlice("/* ");
@@ -860,6 +912,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
 
                 try output.appendSlice("function_");
                 const fun_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{fun_id});
+                defer self.alloc.free(fun_id_str);
                 try output.appendSlice(fun_id_str);
             } else {
                 const src = self.compiler.getSource(node_id);
@@ -878,6 +931,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
 
             try output.appendSlice(" variable_");
             const id = try std.fmt.allocPrint(self.alloc, "{d}", .{var_id});
+            defer self.alloc.free(id);
             try output.appendSlice(id);
 
             try output.appendSlice(" = ");
@@ -986,6 +1040,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
 
                         try output.appendSlice("function_");
                         const fun_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{fun_id});
+                        defer self.alloc.free(fun_id_str);
                         try output.appendSlice(fun_id_str);
                         try output.append('(');
 
@@ -1040,9 +1095,11 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                 .enum_constructor => |ec| {
                     try output.appendSlice("enum_case_");
                     const tar_id = try std.fmt.allocPrint(self.alloc, "{}", .{ec.type_id});
+                    defer self.alloc.free(tar_id);
                     try output.appendSlice(tar_id);
                     try output.append('_');
                     const offset_id = try std.fmt.allocPrint(self.alloc, "{}", .{ec.type_id});
+                    defer self.alloc.free(offset_id);
                     try output.appendSlice(offset_id);
                     try output.append('(');
 
@@ -1080,12 +1137,14 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                 .pointer => {},
                 else => {
                     const error_msg = try std.fmt.allocPrint(self.alloc, "internal error: 'new' creating non-pointer type: {any}", .{self.compiler.getType(type_id)});
+                    defer self.alloc.free(error_msg);
                     @panic(error_msg);
                 },
             }
 
             try output.appendSlice("allocator_");
             const type_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{ptr_type.pointer.target});
+            defer self.alloc.free(type_id_str);
             try output.appendSlice(type_id_str);
             try output.append('(');
 
@@ -1121,6 +1180,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
 
                             try output.appendSlice("function_");
                             const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{fun_id});
+                            defer self.alloc.free(f_id);
                             try output.appendSlice(f_id);
                             try output.append('(');
 
@@ -1138,9 +1198,11 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
 
                             try output.appendSlice("enum_case_");
                             const target_id = try std.fmt.allocPrint(self.alloc, "{d}", .{target});
+                            defer self.alloc.free(target_id);
                             try output.appendSlice(target_id);
                             try output.append('_');
                             const offset_id = try std.fmt.allocPrint(self.alloc, "{d}", .{offset});
+                            defer self.alloc.free(offset_id);
                             try output.appendSlice(offset_id);
                             try output.append('(');
 
@@ -1168,6 +1230,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
 
                             try output.appendSlice("function_");
                             const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{fun_id});
+                            defer self.alloc.free(f_id);
                             try output.appendSlice(f_id);
                             try output.append('(');
 
@@ -1181,9 +1244,11 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
 
                             try output.appendSlice("enum_case_");
                             const target_id = try std.fmt.allocPrint(self.alloc, "{d}", .{target});
+                            defer self.alloc.free(target_id);
                             try output.appendSlice(target_id);
                             try output.append('_');
                             const offset_id = try std.fmt.allocPrint(self.alloc, "{d}", .{offset});
+                            defer self.alloc.free(offset_id);
                             try output.appendSlice(offset_id);
                             try output.append('(');
 
@@ -1221,6 +1286,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                     const exiting_block = exiting_blocks.items[@intCast(i)];
                     if (self.compiler.blocks.items[exiting_block].may_locally_allocate) |scope_level| {
                         const free_str = try std.fmt.allocPrint(self.alloc, "free_allocator_level(allocator, allocation_id + {});\n", .{scope_level});
+                        defer self.alloc.free(free_str);
                         try output.appendSlice(free_str);
                     }
                 }
@@ -1246,6 +1312,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                         if (std.mem.eql(u8, type_field.name, field_name)) {
                             try output.appendSlice("field_");
                             const f_id = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+                            defer self.alloc.free(f_id);
                             try output.appendSlice(f_id);
                             try output.appendSlice(" /*");
                             try output.appendSlice(type_field.name);
@@ -1267,11 +1334,13 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
             const type_id = self.compiler.resolveNodeType(node_id, local_inferences);
             try output.appendSlice("create_buffer_");
             const type_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{type_id});
+            defer self.alloc.free(type_id_str);
             try output.appendSlice(type_id_str);
             try output.append('(');
             try self.codegenAnnotation(node_id, output);
             try output.appendSlice(", ");
             const len_str = try std.fmt.allocPrint(self.alloc, "{d}", .{raw_buffer.items.len});
+            defer self.alloc.free(len_str);
             try output.appendSlice(len_str);
             for (raw_buffer.items) |item| {
                 try output.appendSlice(", ");
@@ -1334,6 +1403,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
 
             try output.appendSlice(" variable_");
             const var_id_str = try std.fmt.allocPrint(self.alloc, "{d}", .{var_id});
+            defer self.alloc.free(var_id_str);
             try output.appendSlice(var_id_str);
 
             try output.appendSlice(" = ");
@@ -1393,6 +1463,7 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
             try output.appendSlice("match_var_");
 
             const target_id = try std.fmt.allocPrint(self.alloc, "{}", .{target});
+            defer self.alloc.free(target_id);
             try output.appendSlice(target_id);
 
             try output.appendSlice(" = ");
@@ -1419,11 +1490,13 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                         try self.codegenTypename(var_type, local_inferences, output);
                         try output.appendSlice(" variable_");
                         const var_id_str = try std.fmt.allocPrint(self.alloc, "{}", .{var_id});
+                        defer self.alloc.free(var_id_str);
                         try output.appendSlice(var_id_str);
 
                         try output.appendSlice(" = ");
                         try output.appendSlice("match_var_");
                         const tar_id = try std.fmt.allocPrint(self.alloc, "{}", .{target});
+                        defer self.alloc.free(tar_id);
                         try output.appendSlice(tar_id);
                         try output.appendSlice(";\n");
 
@@ -1443,9 +1516,11 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                                         try output.appendSlice("if (");
                                         try output.appendSlice("match_var_");
                                         const tar_id0 = try std.fmt.allocPrint(self.alloc, "{}", .{target});
+                                        defer self.alloc.free(tar_id0);
                                         try output.appendSlice(tar_id0);
                                         try output.appendSlice("->arm_id == ");
                                         const case_off = try std.fmt.allocPrint(self.alloc, "{}", .{case_offset});
+                                        defer self.alloc.free(case_off);
                                         try output.appendSlice(case_off);
                                         try output.appendSlice(") {");
                                         try self.codegenNode(match_result, local_inferences, output);
@@ -1466,9 +1541,11 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                                         try output.appendSlice("if (");
                                         try output.appendSlice("match_var_");
                                         const tar_id0 = try std.fmt.allocPrint(self.alloc, "{}", .{target});
+                                        defer self.alloc.free(tar_id0);
                                         try output.appendSlice(tar_id0);
                                         try output.appendSlice("->arm_id == ");
                                         const case_off = try std.fmt.allocPrint(self.alloc, "{}", .{case_offset});
+                                        defer self.alloc.free(case_off);
                                         try output.appendSlice(case_off);
 
                                         var variable_assignments = std.ArrayList(u8).init(self.alloc);
@@ -1482,10 +1559,12 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                                                     try self.codegenTypename(var_type, local_inferences, &variable_assignments);
                                                     try variable_assignments.appendSlice(" variable_");
                                                     const var_id_str = try std.fmt.allocPrint(self.alloc, "{}", .{var_id});
+                                                    defer self.alloc.free(var_id_str);
                                                     try variable_assignments.appendSlice(var_id_str);
 
                                                     try variable_assignments.appendSlice(" = ");
                                                     const match_var = try std.fmt.allocPrint(self.alloc, "match_var_{}", .{target});
+                                                    defer self.alloc.free(match_var);
                                                     try variable_assignments.appendSlice(match_var);
                                                     try variable_assignments.appendSlice("->");
 
@@ -1494,10 +1573,12 @@ pub fn codegenNode(self: *Codegen, node_id: Parser.NodeId, local_inferences: *st
                                                             switch (e.variants.items[case_offset]) {
                                                                 .single => {
                                                                     const case_var = try std.fmt.allocPrint(self.alloc, "case_{}", .{case_offset});
+                                                                    defer self.alloc.free(case_var);
                                                                     try variable_assignments.appendSlice(case_var);
                                                                 },
                                                                 .@"struct" => {
                                                                     const case_var = try std.fmt.allocPrint(self.alloc, "case_{}_{}", .{ case_offset, arg_idx });
+                                                                    defer self.alloc.free(case_var);
                                                                     try variable_assignments.appendSlice(case_var);
                                                                 },
                                                                 else => @panic("unsupported enum variant"),
@@ -1584,6 +1665,7 @@ pub fn codegenBlock(self: *Codegen, block: Parser.NodeId, local_inferences: *std
                                 const exiting_block = exiting_blocks.items[@intCast(i)];
                                 if (self.compiler.blocks.items[exiting_block].may_locally_allocate) |scope_level| {
                                     const free_str = try std.fmt.allocPrint(self.alloc, "free_allocator_level(allocator, allocation_id + {});\n", .{scope_level});
+                                    defer self.alloc.free(free_str);
                                     try output.appendSlice(free_str);
                                 }
                             }
@@ -1604,6 +1686,7 @@ pub fn codegenBlock(self: *Codegen, block: Parser.NodeId, local_inferences: *std
             }
             if (self.compiler.blocks.items[block_id].may_locally_allocate) |scope_level| {
                 const free_str = try std.fmt.allocPrint(self.alloc, "free_allocator_level(allocator, allocation_id + {});\n", .{scope_level});
+                defer self.alloc.free(free_str);
                 try output.appendSlice(free_str);
             }
         },
@@ -1697,6 +1780,7 @@ pub fn codegen(self: *Codegen) ![]const u8 {
             try output.appendSlice("allocator = create_allocator(100);\n");
             try output.appendSlice("function_");
             const idx_str = try std.fmt.allocPrint(self.alloc, "{d}", .{idx});
+            defer self.alloc.free(idx_str);
             try output.appendSlice(idx_str);
             try output.appendSlice("(0);\n}\n");
         }

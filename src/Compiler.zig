@@ -128,7 +128,7 @@ pub fn deinit(self: *Compiler) void {
                     payload.deinit();
                 }
             },
-            .call => |call| call.args.deinit(),
+            // .call => |call| call.args.deinit(),
             .match => |match| match.match_arms.deinit(),
             .raw_buffer => |buffer| buffer.deinit(),
             else => {},
@@ -144,11 +144,13 @@ pub fn deinit(self: *Compiler) void {
     }
     self.blocks.deinit();
 
+    self.alloc.free(self.source);
+
     self.file_offsets.deinit();
     self.variables.deinit();
 
     for (self.functions.items) |fun| {
-        fun.params.deinit();
+        // fun.params.deinit();
         fun.lifetime_annotations.deinit();
         fun.type_params.deinit();
         fun.inference_vars.deinit();
@@ -287,7 +289,8 @@ pub fn print(self: *Compiler) void {
     var iter = self.call_resolution.iterator();
     while (iter.next()) |call| {
         const node_id_source = self.getSource(call.key_ptr.*);
-        var call_target: []u8 = "";
+        var call_target: []u8 = undefined;
+        defer self.alloc.free(call_target);
         switch (call.value_ptr.*) {
             .function => {
                 call_target = std.fmt.allocPrint(self.alloc, "function {d}", .{call.value_ptr.*.function}) catch unreachable;
@@ -340,6 +343,7 @@ pub fn printErrors(self: *Compiler, err: *Errors.SourceError) !void {
     if (line_ext[1] > file_span_start + 1) {
         const prev_line_ext = self.lineExtents(line_ext[1] - 1, file_span_start, file_span_end);
         const prev_line_number_str = try std.fmt.allocPrint(self.alloc, "{d}", .{prev_line_ext[0]});
+        defer self.alloc.free(prev_line_number_str);
 
         for (0..(max_number_width - prev_line_number_str.len)) |_| {
             std.debug.print(" ", .{});
@@ -451,6 +455,7 @@ pub fn addFile(self: *Compiler, file_name: []const u8) !void {
     try self.file_offsets.append(File{ .fname = file_name, .offset = span_offset, .end = span_offset + file_size });
 
     const new_source = try std.fmt.allocPrint(self.alloc, "{s}\n{s}", .{ self.source, content });
+    // defer self.alloc.free(new_source);
     self.source = new_source;
 }
 
@@ -557,6 +562,7 @@ pub fn findType(self: *Compiler, ty: Typechecker.Type) Typechecker.TypeId {
     }
 
     const error_msg = std.fmt.allocPrint(self.alloc, "internal error: can't find {any} as a TypeId", .{ty}) catch unreachable;
+    defer self.alloc.free(error_msg);
     @panic(error_msg);
 }
 
@@ -820,6 +826,7 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
         .c_char => return "c_char",
         .c_external_type => |node_id| {
             const s = try std.fmt.allocPrint(self.alloc, "extern({s})", .{self.getSource(node_id)});
+            defer self.alloc.free(s);
             return s;
         },
         .c_int => return "c_int",
@@ -840,6 +847,7 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
                     first = false;
                 }
                 const v_id = try std.fmt.allocPrint(self.alloc, "{d}", .{self.getVariable(param.var_id).ty});
+                defer self.alloc.free(v_id);
                 try output.appendSlice(v_id);
             }
 
@@ -849,13 +857,14 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
         },
         .i64 => return "i64",
         .pointer => |ptr_ty| {
-            var output: []const u8 = "";
+            var output: []const u8 = undefined;
             switch (ptr_ty.pointer_type) {
                 .Owned => output = "owned ",
                 .Shared => output = "shared ",
                 else => {},
             }
             output = try std.fmt.allocPrint(self.alloc, "{s} {s}", .{ output, try self.prettyType(ptr_ty.target) });
+            defer self.alloc.free(output);
             if (ptr_ty.optional) {
                 output = try std.fmt.allocPrint(self.alloc, "{s}?", .{output});
             }

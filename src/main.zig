@@ -6,7 +6,8 @@ const Codegen = @import("Codegen.zig");
 const LifetimeChecker = @import("LifetimeChecker.zig");
 
 pub fn main() !void {
-    const alloc = std.heap.page_allocator;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const alloc = gpa.allocator();
 
     var args = std.process.args();
     _ = args.next();
@@ -67,6 +68,7 @@ pub fn main() !void {
     var codegen = try Codegen.init(alloc, compiler);
     defer compiler.deinit();
     const output = try codegen.codegen();
+    // defer alloc.free(output);
 
     if (compiler.errors.items.len == 0) compiler.print();
 
