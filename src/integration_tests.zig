@@ -27,7 +27,8 @@ fn execOutput(alloc: std.mem.Allocator) !void {
 }
 
 test "Tests coverage" {
-    const alloc = std.heap.page_allocator;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const alloc = gpa.allocator();
 
     var dir = try std.fs.cwd().openDir("tests", .{});
     defer dir.close();
