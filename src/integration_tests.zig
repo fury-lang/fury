@@ -68,6 +68,7 @@ test "Tests coverage" {
         }
 
         var compiler = Compiler.init(alloc);
+        defer compiler.deinit();
         const span_offset = compiler.spanOffset();
         try compiler.addFile(file_path);
 
@@ -86,6 +87,7 @@ test "Tests coverage" {
         }
 
         var typechecker = try Typechecker.init(alloc, c);
+        defer typechecker.deinit();
         c = try typechecker.typecheck();
 
         if (c.errors.items.len > 0) {
@@ -100,6 +102,7 @@ test "Tests coverage" {
         }
 
         var lifetime_checker = try LifetimeChecker.init(alloc, c);
+        defer lifetime_checker.deinit();
         c = try lifetime_checker.checkLifetimes();
 
         if (c.errors.items.len > 0) {

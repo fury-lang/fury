@@ -427,7 +427,7 @@ pub fn typecheckTypename(self: *Typechecker, node_id: Parser.NodeId) !TypeId {
                     }
                 } else {
                     const error_msg = try std.fmt.allocPrint(self.alloc, "unknown type: {s}", .{name});
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, node_id);
                     return UNKNOWN_TYPE_ID;
                 }
@@ -459,7 +459,7 @@ pub fn typecheckTypename(self: *Typechecker, node_id: Parser.NodeId) !TypeId {
         },
         else => {
             const error_msg = try std.fmt.allocPrint(self.alloc, "expected type name {s}", .{self.compiler.getSource(node_id)});
-            defer self.alloc.free(error_msg);
+
             try self.@"error"(error_msg, node_id);
             return VOID_TYPE_ID;
         },
@@ -530,7 +530,7 @@ pub fn typecheckCallWithFunId(self: *Typechecker, name: Parser.NodeId, fun_id: F
 
     if (fun_args.items.len != params.items.len) {
         const error_msg = try std.fmt.allocPrint(self.alloc, "expected {d} args, found {d}", .{ params.items.len, fun_args.items.len });
-        defer self.alloc.free(error_msg);
+
         try self.@"error"(error_msg, name);
 
         return return_type;
@@ -609,7 +609,7 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                     const expected_type = self.compiler.resolveType(arg_ty, local_inferences);
                     const found_type = self.compiler.resolveType(variable_ty, local_inferences);
                     const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ try self.compiler.prettyType(expected_type), try self.compiler.prettyType(found_type) });
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, name_value);
 
                     // TODO add a note about where params are defined
@@ -618,7 +618,7 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                 const arg_name = self.compiler.getSource(name_slice);
                 if (!std.mem.eql(u8, arg_name, params.items[idx].name)) {
                     const error_msg = try std.fmt.allocPrint(self.alloc, "expected name {s}", .{params.items[idx].name});
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, name_slice);
                     // TODO add a note about where param is defined
                 }
@@ -644,7 +644,7 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                             const expected_type = self.compiler.resolveType(replacement, local_inferences);
                             const found_type = self.compiler.resolveType(arg_type, local_inferences);
                             const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ try self.compiler.prettyType(expected_type), try self.compiler.prettyType(found_type) });
-                            defer self.alloc.free(error_msg);
+
                             try self.@"error"(error_msg, arg);
 
                             // TODO add a note about where params are defined
@@ -658,7 +658,7 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                     const expected_type = self.compiler.resolveType(variable_ty, local_inferences);
                     const found_type = self.compiler.resolveType(arg_type, local_inferences);
                     const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ try self.compiler.prettyType(expected_type), try self.compiler.prettyType(found_type) });
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, arg);
 
                     // TODO add a note about where params are defined
@@ -1335,7 +1335,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                 },
                 else => {
                     const error_msg = try std.fmt.allocPrint(self.alloc, "'none' requires pointer type, found: {s}", .{try self.compiler.prettyType(type_id)});
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, node_id);
                 },
             }
@@ -1364,7 +1364,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                 const tt = try self.typecheckTypename(let_ty);
                 if (!self.unifyTypes(tt, initializer_type, local_inferences)) {
                     const error_msg = try std.fmt.allocPrint(self.alloc, "initializer and given type do not match (expected: {s}, found: {s})", .{ try self.compiler.prettyType(tt), try self.compiler.prettyType(initializer_type) });
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, initializer);
                 }
 
@@ -1404,7 +1404,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
 
                 if (!self.unifyTypes(tt, initializer_type, local_inferences)) {
                     const error_msg = try std.fmt.allocPrint(self.alloc, "initializer and given type do not match (expected: {s}, found: {s})", .{ try self.compiler.prettyType(tt), try self.compiler.prettyType(initializer_type) });
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, initializer);
                 }
 
@@ -1435,7 +1435,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
 
                     if (!self.unifyTypes(lhs_ty, rhs_ty, local_inferences)) {
                         const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during binary operation. expected: {s}, found: {s}", .{ try self.compiler.prettyType(lhs_ty), try self.compiler.prettyType(rhs_ty) });
-                        defer self.alloc.free(error_msg);
+
                         try self.@"error"(error_msg, op);
                     }
 
@@ -1452,7 +1452,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                     const rhs_ty = try self.typecheckNode(rhs, local_inferences);
                     if (!self.unifyTypes(lhs_ty, rhs_ty, local_inferences)) {
                         const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during operation. expected: {s}, found: {s}", .{ try self.compiler.prettyType(lhs_ty), try self.compiler.prettyType(rhs_ty) });
-                        defer self.alloc.free(error_msg);
+
                         try self.@"error"(error_msg, op);
                     }
 
@@ -1464,7 +1464,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
 
                     if (!self.unifyTypes(lhs_ty, rhs_ty, local_inferences)) {
                         const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during operation. expected: {s}, found: {s}", .{ try self.compiler.prettyType(lhs_ty), try self.compiler.prettyType(rhs_ty) });
-                        defer self.alloc.free(error_msg);
+
                         try self.@"error"(error_msg, op);
                     }
 
@@ -1477,7 +1477,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
 
                     if (!self.unifyTypes(lhs_ty, rhs_ty, local_inferences)) {
                         const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during operation. expected: {s}, found: {s}", .{ try self.compiler.prettyType(lhs_ty), try self.compiler.prettyType(rhs_ty) });
-                        defer self.alloc.free(error_msg);
+
                         try self.@"error"(error_msg, op);
                     }
 
@@ -1489,13 +1489,13 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
 
                     if (!self.unifyTypes(lhs_ty, BOOL_TYPE_ID, local_inferences)) {
                         const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during binary operation. expected: bool, found: {s}", .{try self.compiler.prettyType(lhs_ty)});
-                        defer self.alloc.free(error_msg);
+
                         try self.@"error"(error_msg, op);
                     }
 
                     if (!self.unifyTypes(rhs_ty, BOOL_TYPE_ID, local_inferences)) {
                         const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch during binary operation. expected: bool, found: {s}", .{try self.compiler.prettyType(rhs_ty)});
-                        defer self.alloc.free(error_msg);
+
                         try self.@"error"(error_msg, op);
                     }
 
@@ -1621,7 +1621,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                 if (expected_type) |expected| {
                     if (!self.unifyTypes(expected, expr_type, local_inferences)) {
                         const error_msg = try std.fmt.allocPrint(self.alloc, "incompatible type at return, found: {s} expected: {s}", .{ try self.compiler.prettyType(expr_type), try self.compiler.prettyType(expected) });
-                        defer self.alloc.free(error_msg);
+
                         try self.@"error"(error_msg, return_expr);
                     }
                 } else {
@@ -1740,7 +1740,7 @@ pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inference
                     ty = item_type;
                 } else if (ty != item_type) {
                     const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch in buffer. expected {s}, found: {s}", .{ try self.compiler.prettyType(ty), try self.compiler.prettyType(item_type) });
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, node_id);
                 }
             }
@@ -2087,7 +2087,7 @@ pub fn typecheckinit(self: *Typechecker, pointer_type: Parser.PointerType, node_
 
                     if (args.items.len != fields.items.len) {
                         const error_msg = try std.fmt.allocPrint(self.alloc, "mismatch in number of arguments. expected {d}, found {d}", .{ fields.items.len, args.items.len });
-                        defer self.alloc.free(error_msg);
+
                         try self.@"error"(error_msg, head);
                     }
 
@@ -2142,7 +2142,7 @@ pub fn typecheckinit(self: *Typechecker, pointer_type: Parser.PointerType, node_
 
                                             if (!self.unifyTypes(known_field_type, value_type, local_inferences)) {
                                                 const error_msg = try std.fmt.allocPrint(self.alloc, "incompatible type for argument, expected: {s}, found: {s}", .{ try self.compiler.prettyType(value_type), try self.compiler.prettyType(known_field_type) });
-                                                defer self.alloc.free(error_msg);
+
                                                 try self.@"error"(error_msg, name_value);
                                             }
                                         }
@@ -2289,7 +2289,7 @@ pub fn typecheckNamespacedTypeLookup(self: *Typechecker, namespace: Parser.NodeI
                                         });
                                     } else {
                                         const error_msg = try std.fmt.allocPrint(self.alloc, "enum case has {} values, but should have 1", .{args.items.len});
-                                        defer self.alloc.free(error_msg);
+
                                         try self.@"error"(error_msg, item);
                                         return VOID_TYPE_ID;
                                     }
@@ -2351,7 +2351,7 @@ pub fn typecheckNamespacedTypeLookup(self: *Typechecker, namespace: Parser.NodeI
                                         });
                                     } else {
                                         const error_msg = try std.fmt.allocPrint(self.alloc, "enum case has {} values, but should have 1", .{args.items.len});
-                                        defer self.alloc.free(error_msg);
+
                                         try self.@"error"(error_msg, item);
                                         return VOID_TYPE_ID;
                                     }
@@ -2572,19 +2572,19 @@ pub fn typecheckMatch(self: *Typechecker, target: Parser.NodeId, match_arms: std
                         .simple => |simple| {
                             const variant_name = simple.name;
                             const error_msg = try std.fmt.allocPrint(self.alloc, "missing pattern match for {s}", .{variant_name});
-                            defer self.alloc.free(error_msg);
+
                             try self.@"error"(error_msg, target);
                         },
                         .single => |single| {
                             const variant_name = single.name;
                             const error_msg = try std.fmt.allocPrint(self.alloc, "missing pattern match for {s}(..)", .{variant_name});
-                            defer self.alloc.free(error_msg);
+
                             try self.@"error"(error_msg, target);
                         },
                         .@"struct" => |s| {
                             const variant_name = s.name;
                             const error_msg = try std.fmt.allocPrint(self.alloc, "missing pattern match for {s}(..)", .{variant_name});
-                            defer self.alloc.free(error_msg);
+
                             try self.@"error"(error_msg, target);
                         },
                     }
@@ -3033,6 +3033,7 @@ pub fn typecheck(self: *Typechecker) !Compiler {
     const top_level: Parser.NodeId = num_nodes - 1;
     // Top-level local inferences
     var local_inference = std.ArrayList(TypeId).init(self.alloc);
+    local_inference.deinit();
 
     // Typecheck until we hit a fix point for our inferences
     while (true) {
@@ -3234,7 +3235,6 @@ pub fn findModuleInScope(self: *Typechecker, namespace: Parser.NodeId) ?ModuleId
             // this needs to somehow be able to resolve the path against all the segments of the path
             const simple_path = module_entry.key_ptr.*[0 .. module_entry.key_ptr.len - 5];
             var path_copy: []const u8 = std.fmt.allocPrint(self.alloc, "{s}", .{simple_path}) catch unreachable;
-            // defer self.alloc.free(path_copy);
             std.mem.reverse(u8, @constCast(path_copy));
             var split_item = std.mem.split(u8, path_copy, "/");
             path_copy = split_item.first();

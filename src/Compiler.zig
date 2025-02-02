@@ -455,7 +455,6 @@ pub fn addFile(self: *Compiler, file_name: []const u8) !void {
     try self.file_offsets.append(File{ .fname = file_name, .offset = span_offset, .end = span_offset + file_size });
 
     const new_source = try std.fmt.allocPrint(self.alloc, "{s}\n{s}", .{ self.source, content });
-    // defer self.alloc.free(new_source);
     self.source = new_source;
 }
 
@@ -562,7 +561,6 @@ pub fn findType(self: *Compiler, ty: Typechecker.Type) Typechecker.TypeId {
     }
 
     const error_msg = std.fmt.allocPrint(self.alloc, "internal error: can't find {any} as a TypeId", .{ty}) catch unreachable;
-    defer self.alloc.free(error_msg);
     @panic(error_msg);
 }
 
@@ -766,6 +764,8 @@ pub fn isGenericType(self: *Compiler, type_id: Typechecker.TypeId, list: std.Arr
     // The `seen` parameter is used to protect the recursion from going infinite. Once we see a type,
     // before we destructure it, we log that we have seen it so we do not check it again.
     var seen = try list.clone();
+    defer seen.deinit();
+    defer list.deinit();
     for (seen.items) |item| {
         if (item == type_id) {
             return false;
@@ -826,7 +826,6 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
         .c_char => return "c_char",
         .c_external_type => |node_id| {
             const s = try std.fmt.allocPrint(self.alloc, "extern({s})", .{self.getSource(node_id)});
-            defer self.alloc.free(s);
             return s;
         },
         .c_int => return "c_int",
@@ -847,7 +846,6 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
                     first = false;
                 }
                 const v_id = try std.fmt.allocPrint(self.alloc, "{d}", .{self.getVariable(param.var_id).ty});
-                defer self.alloc.free(v_id);
                 try output.appendSlice(v_id);
             }
 
@@ -864,7 +862,6 @@ pub fn prettyType(self: *Compiler, type_id: Typechecker.TypeId) ![]const u8 {
                 else => {},
             }
             output = try std.fmt.allocPrint(self.alloc, "{s} {s}", .{ output, try self.prettyType(ptr_ty.target) });
-            defer self.alloc.free(output);
             if (ptr_ty.optional) {
                 output = try std.fmt.allocPrint(self.alloc, "{s}?", .{output});
             }

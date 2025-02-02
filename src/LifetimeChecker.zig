@@ -96,7 +96,7 @@ pub fn currentBlockMayAllocate(self: *LifetimeChecker, scope_level: usize, node_
         .scope => |scope| {
             if (scope.level > scope_level) {
                 const error_msg = try std.fmt.allocPrint(self.alloc, "current_block_may_allocate saw an impossible level/scope_level: {} vs {}", .{ scope.level, scope_level });
-                defer self.alloc.free(error_msg);
+
                 @panic(error_msg);
             }
         },
@@ -154,7 +154,7 @@ pub fn expandLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, lifetime_f
 
                     if (incoming_var_id != var_id) {
                         const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime between param '{s}' and param '{s}'", .{ param_name1, param_name2 });
-                        defer self.alloc.free(error_msg);
+
                         try self.@"error"(error_msg, node_id);
                         // TODO add a note
                     }
@@ -165,14 +165,14 @@ pub fn expandLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, lifetime_f
                 .@"return" => {
                     const param_name = self.compiler.getVariableName(var_id);
                     const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime between param '{s}' and return", .{param_name});
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, node_id);
                     // TODO add a note
                 },
                 else => {
                     const param_name = self.compiler.getVariableName(var_id);
                     const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime for param '{s}'", .{param_name});
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, node_id);
                 },
             }
@@ -184,7 +184,7 @@ pub fn expandLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, lifetime_f
                 .param => |p| {
                     const param_name = self.compiler.getVariableName(p.var_id);
                     const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime for param '{s}'", .{param_name});
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, node_id);
                 },
                 .scope => {
@@ -195,7 +195,7 @@ pub fn expandLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, lifetime_f
                 },
                 else => {
                     const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime for return, found '{s}'", .{@tagName(lifetime)});
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, node_id);
                 },
             }
@@ -217,7 +217,7 @@ pub fn expandLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, lifetime_f
                     if (!self.compiler.isAllocatorType(var_type)) {
                         const param_name = self.compiler.getVariableName(var_id);
                         const error_msg = try std.fmt.allocPrint(self.alloc, "param '{s}' is not an allocator, so we can't infer a safe lifetime", .{param_name});
-                        defer self.alloc.free(error_msg);
+
                         try self.@"error"(error_msg, node_id);
                     } else {
                         self.compiler.setNodeLifetime(node_id, lifetime);
@@ -230,7 +230,7 @@ pub fn expandLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, lifetime_f
                 },
                 .unknown => {
                     const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime for return, found '{s}'", .{@tagName(lifetime)});
-                    defer self.alloc.free(error_msg);
+
                     try self.@"error"(error_msg, node_id);
                 },
             }
@@ -245,7 +245,6 @@ pub fn lifetimeName(self: *LifetimeChecker, lifetime: AllocationLifetime) []cons
     } else if (std.mem.eql(u8, name, "param")) {
         const var_id = self.compiler.getVariableName(lifetime.param.var_id);
         const var_name = std.fmt.allocPrint(self.alloc, "param '{s}'", .{var_id}) catch unreachable;
-        defer self.alloc.free(var_name);
         return var_name;
     }
 
@@ -536,7 +535,7 @@ pub fn checkNodeLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, scope_l
                     if (!std.mem.eql(u8, @tagName(self.compiler.getNodeLifetime(node_id)), "scope")) {
                         // We're not one of the local scopes, we're escaping but this is required to be a local allocation
                         const error_msg = try std.fmt.allocPrint(self.alloc, "allocation is not local, lifetime inferred to be {s}", .{self.lifetimeName(self.compiler.getNodeLifetime(node_id))});
-                        defer self.alloc.free(error_msg);
+
                         try self.@"error"(error_msg, node_id);
                     }
                 },
