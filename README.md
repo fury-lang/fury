@@ -6,9 +6,35 @@
 - Efficiency | Productivity
 - Systems and application programming
 
-Also see the [philosophy](docs/philosophy.md) for more info.
+See a simple circular linked list example in fury,
+```rs
+struct Node {
+    data: i64
+    next: Node?
+}
 
-## Participating in the closed alpha/beta
+fun main() {
+    mut node3 = new Node(data: 3, next: none)
+    let node2 = new Node(data: 2, next: node3)
+    let node1 = new Node(data: 1, next: node2)
+    node3.next = node1
+
+    mut curr: Node? = node2
+    let end = curr
+
+    // println(curr.data)
+    mut total = curr.data
+
+    while curr.next != end {
+        curr = curr.next
+        total -= curr.data
+    }
+
+    println(total)
+}
+```
+
+Also see the [philosophy](docs/philosophy.md) for more info.
 
 ## Status
 
@@ -16,9 +42,14 @@ The Fury project is still in its early days of development. While we have develo
 
 ## Running the test suite
 
-To run the Fury test suite, be sure to have the following installed:
+To run the Fury test suite, be sure you have `clang` installed.
 
-* A reasonably good `clang` in your path
+```bash
+zig build run -- <file-path>    # codegen a output.c file
+zig build gcc                  # emit executable using gcc
+zig build exec                 # run executable
+zig build coverage             # run entire test suite
+```
 
 The Fury compiler outputs C code, which you can then build with a C-compatible compiler. The test suite assumes `clang` is the compiler that is available. (Note for Windows users: Visual Studio can install 'clang' as an optional install)
 

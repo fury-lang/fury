@@ -1,3 +1,5 @@
+> **_NOTE:_** These docs are taken from the from the orignal [rust](https://github.com/sophiajt/june) project which has been archived, so things for us may could differ in future.
+
 # Goals
 
 ## Teachability, learnability, and readability

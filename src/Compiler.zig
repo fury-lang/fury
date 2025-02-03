@@ -242,12 +242,8 @@ pub fn print(self: *Compiler) void {
     std.debug.print("num nodes: {}\n", .{self.ast_node.items.len});
     for (self.ast_node.items, 0..) |node, node_id| {
         std.debug.print("{}, {any}  (", .{ node_id, node });
-        // std.debug.print("\n", .{});
-        // std.debug.print("{d} {any},    (lifetime: ", .{ node_id, node });
-        // std.debug.print("{}: {s}: ", .{ node_id, self.getSource(node_id) });
         self.printLifetime(node_id);
         std.debug.print(")\n", .{});
-        // std.debug.print("{d} {s} -> {s},    type: {s},    lifetime: {any}\n", .{ node_id, @tagName(node), self.getSource(node_id), self.prettyType(self.node_types.items[node_id]) catch unreachable, self.node_lifetimes.items[node_id] });
     }
 
     std.debug.print("\nBlocks:\n", .{});
@@ -273,14 +269,12 @@ pub fn print(self: *Compiler) void {
     std.debug.print("\nFunctions:\n", .{});
     std.debug.print("num functions: {}\n", .{self.functions.items.len});
     for (self.functions.items, 0..) |fun, fun_id| {
-        // std.debug.print("{s}\n", .{self.getSource(fun.name)});
         std.debug.print("{d} {s}\n", .{ fun_id, self.getSource(fun.name) });
     }
 
     std.debug.print("\nTypes:\n", .{});
     std.debug.print("num types: {}\n", .{self.types.items.len});
     for (self.types.items, 0..) |ty, ty_id| {
-        // std.debug.print("{d} {any}\n", .{ ty_id, ty });
         std.debug.print("{d} {s}\n", .{ ty_id, @tagName(ty) });
     }
 
