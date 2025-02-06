@@ -597,7 +597,7 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
 
                 if (self.compiler.getVariable(params.items[idx].var_id).is_mutable and !self.isBindingMutable(name_value)) {
                     try self.@"error"("argument to function needs to be mutable", name_value);
-                    // TODO add a note
+                    try self.note("parameter defined here", self.compiler.getVariable(params.items[idx].var_id).where_defined);
                 }
 
                 const variable = self.compiler.getVariable(params.items[idx].var_id);
@@ -611,8 +611,7 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                     const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ try self.compiler.prettyType(expected_type), try self.compiler.prettyType(found_type) });
 
                     try self.@"error"(error_msg, name_value);
-
-                    // TODO add a note about where params are defined
+                    try self.note("parameter defined here", variable.where_defined);
                 }
 
                 const arg_name = self.compiler.getSource(name_slice);
@@ -620,7 +619,7 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                     const error_msg = try std.fmt.allocPrint(self.alloc, "expected name {s}", .{params.items[idx].name});
 
                     try self.@"error"(error_msg, name_slice);
-                    // TODO add a note about where param is defined
+                    try self.note("parameter defined here", variable.where_defined);
                 }
             },
             else => {
@@ -646,8 +645,7 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                             const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ try self.compiler.prettyType(expected_type), try self.compiler.prettyType(found_type) });
 
                             try self.@"error"(error_msg, arg);
-
-                            // TODO add a note about where params are defined
+                            try self.note("parameter defined here", variable.where_defined);
                         }
                     } else {
                         try type_var_replacements.put(self.compiler.getUnderlyingTypeId(variable_ty), self.compiler.getUnderlyingTypeId(arg_type));
@@ -660,13 +658,12 @@ pub fn typecheckCallHelper(self: *Typechecker, args: *std.ArrayList(Parser.NodeI
                     const error_msg = try std.fmt.allocPrint(self.alloc, "type mismatch for arg. expected {s}, found {s}", .{ try self.compiler.prettyType(expected_type), try self.compiler.prettyType(found_type) });
 
                     try self.@"error"(error_msg, arg);
-
-                    // TODO add a note about where params are defined
+                    try self.note("parameter defined here", variable.where_defined);
                 }
 
                 if (self.compiler.getVariable(param.var_id).is_mutable and !self.isBindingMutable(arg)) {
                     try self.@"error"("argument to function needs to be mutable", arg);
-                    // TODO add a note about where params are defined
+                    try self.note("parameter defined here", variable.where_defined);
                 }
             },
         }
@@ -1940,7 +1937,7 @@ pub fn typecheckLvalue(self: *Typechecker, lvalue: Parser.NodeId, local_inferenc
     return VOID_TYPE_ID;
 }
 
-pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {
+pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) !bool {
     switch (self.compiler.getType(type_id)) {
         .bool, .f64, .i64, .void => return true,
         .@"struct" => |s| {
@@ -1948,14 +1945,14 @@ pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {
             const fields = s.fields;
 
             for (generic_params.items) |generic_param| {
-                if (!self.typeIsOwned(generic_param)) {
+                if (!try self.typeIsOwned(generic_param)) {
                     return false;
                 }
             }
 
             for (fields.items) |field| {
-                if (field.member_access == Parser.MemberAccess.Public and !self.typeIsOwned(field.ty)) {
-                    // TODO add a note
+                if (field.member_access == Parser.MemberAccess.Public and !try self.typeIsOwned(field.ty)) {
+                    try self.note("public field is a shared pointer", field.where_defined);
                     return false;
                 }
             }
@@ -1987,17 +1984,16 @@ pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {
                         const var_type_id = variable.ty;
                         const where_defined = variable.where_defined;
 
-                        if (!self.typeIsOwned(var_type_id) and !std.mem.eql(u8, param.name, "self")) {
-                            // TODO add a note
-                            _ = where_defined;
+                        if (!try self.typeIsOwned(var_type_id) and !std.mem.eql(u8, param.name, "self")) {
+                            try self.note("param is a shared pointer, and self is mutable", where_defined);
                             return false;
                         }
                     }
                 }
 
-                if (!self.typeIsOwned(return_type)) {
-                    if (return_node) |_| {
-                        // TODO add a note
+                if (!try self.typeIsOwned(return_type)) {
+                    if (return_node) |ret_node| {
+                        try self.note("return type is a shared pointer", ret_node);
                     }
                     return false;
                 }
@@ -2013,7 +2009,7 @@ pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {
             const variants = e.variants;
 
             for (generic_params.items) |generic_param| {
-                if (!self.typeIsOwned(generic_param)) {
+                if (!try self.typeIsOwned(generic_param)) {
                     return false;
                 }
             }
@@ -2021,13 +2017,13 @@ pub fn typeIsOwned(self: *Typechecker, type_id: TypeId) bool {
             for (variants.items) |variant| {
                 switch (variant) {
                     .single => |single| {
-                        if (!self.typeIsOwned(single.param)) {
+                        if (!try self.typeIsOwned(single.param)) {
                             return false;
                         }
                     },
                     .@"struct" => |s| {
                         for (s.params.items) |param_type| {
-                            if (!self.typeIsOwned(param_type.ty)) {
+                            if (!try self.typeIsOwned(param_type.ty)) {
                                 return false;
                             }
                         }
@@ -2063,7 +2059,7 @@ pub fn typecheckinit(self: *Typechecker, pointer_type: Parser.PointerType, node_
 
             // FIXME: remember the reason why something isn't safe to be owned
             // so we can give a better error
-            if (pointer_type == .Owned and !self.typeIsOwned(type_id.?)) {
+            if (pointer_type == .Owned and !try self.typeIsOwned(type_id.?)) {
                 try self.@"error"("tried to create owned pointer on type that shares its pointers", node_id);
             }
 
@@ -2962,8 +2958,7 @@ pub fn typecheckVarOrFunction(self: *Typechecker, node_id: Parser.NodeId, var_or
             .var_id => |var_id| {
                 if (try self.varWasPreviouslyMoved(var_id)) |where_moved| {
                     try self.@"error"("moved variable accessed after move", node_id);
-                    // TODO add note where var moved
-                    _ = where_moved;
+                    try self.note("location of variable move", where_moved);
                 }
                 try self.compiler.var_resolution.put(node_id, var_id);
 
@@ -3250,6 +3245,10 @@ pub fn findModuleInScope(self: *Typechecker, namespace: Parser.NodeId) ?ModuleId
 
 pub fn @"error"(self: *Typechecker, message: []const u8, node_id: Parser.NodeId) !void {
     try self.compiler.errors.append(Errors.SourceError{ .message = message, .node_id = node_id, .severity = Errors.Severity.Error });
+}
+
+pub fn note(self: *Typechecker, message: []const u8, node_id: Parser.NodeId) !void {
+    try self.compiler.errors.append(Errors.SourceError{ .message = message, .node_id = node_id, .severity = Errors.Severity.Note });
 }
 
 pub fn enterScope(self: *Typechecker) !void {

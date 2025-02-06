@@ -56,6 +56,14 @@ pub fn @"error"(self: *LifetimeChecker, message: []const u8, node_id: Parser.Nod
     });
 }
 
+pub fn note(self: *LifetimeChecker, message: []const u8, node_id: Parser.NodeId) !void {
+    try self.compiler.errors.append(Errors.SourceError{
+        .message = message,
+        .node_id = node_id,
+        .severity = Errors.Severity.Note,
+    });
+}
+
 pub fn checkBlockLifetime(self: *LifetimeChecker, block_id: Parser.BlockId, scope_level: usize) !void {
     try self.current_blocks.append(block_id);
     const block = self.compiler.blocks.items[block_id];
@@ -154,9 +162,9 @@ pub fn expandLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, lifetime_f
 
                     if (incoming_var_id != var_id) {
                         const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime between param '{s}' and param '{s}'", .{ param_name1, param_name2 });
-
+                        const note_msg = try std.fmt.allocPrint(self.alloc, "add a lifetime annotation to the function, e.g. [{s} == {s}]", .{ param_name1, param_name2 });
                         try self.@"error"(error_msg, node_id);
-                        // TODO add a note
+                        try self.note(note_msg, node_id);
                     }
                 },
                 .scope => {
@@ -165,14 +173,13 @@ pub fn expandLifetime(self: *LifetimeChecker, node_id: Parser.NodeId, lifetime_f
                 .@"return" => {
                     const param_name = self.compiler.getVariableName(var_id);
                     const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime between param '{s}' and return", .{param_name});
-
+                    const note_msg = try std.fmt.allocPrint(self.alloc, "add a lifetime annotation to the function, e.g. [{s} == return]", .{param_name});
                     try self.@"error"(error_msg, node_id);
-                    // TODO add a note
+                    try self.note(note_msg, node_id);
                 },
                 else => {
                     const param_name = self.compiler.getVariableName(var_id);
                     const error_msg = try std.fmt.allocPrint(self.alloc, "can't find compatible lifetime for param '{s}'", .{param_name});
-
                     try self.@"error"(error_msg, node_id);
                 },
             }
