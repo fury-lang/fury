@@ -62,7 +62,7 @@ test "Tests coverage" {
         const source = try alloc.alloc(u8, file_size);
         _ = try file.read(source);
 
-        var split_source = std.mem.split(u8, source, "\n");
+        var split_source = std.mem.splitSequence(u8, source, "\n");
         const expected_result = split_source.first();
         if (std.mem.startsWith(u8, "// output: ", expected_result) or std.mem.startsWith(u8, "// error: ", expected_result)) {
             @panic("test should have an \"output: \" or \"error: \" test configuration comment");

@@ -1040,8 +1040,8 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
 
             while (op_prec <= last_prec and expr_stack.items.len > 1) {
                 // TODO hadle error cases here on stack
-                const rhs_new = expr_stack.pop();
-                const op_new = expr_stack.pop();
+                const rhs_new = expr_stack.pop().?;
+                const op_new = expr_stack.pop().?;
 
                 last_prec = self.operatorPrecedence(op_new);
 
@@ -1051,7 +1051,7 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
                     break;
                 }
 
-                lhs = expr_stack.pop();
+                lhs = expr_stack.pop().?;
                 span_start = self.compiler.span_start.items[lhs];
                 const span_end = self.compiler.span_end.items[rhs_new];
 
@@ -1075,9 +1075,9 @@ pub fn mathExpression(self: *Parser, allow_assignment: bool) anyerror!NodeId {
 
     while (expr_stack.items.len > 1) {
         // TODO handle error cases here on stack
-        const rhs = expr_stack.pop();
-        const op = expr_stack.pop();
-        lhs = expr_stack.pop();
+        const rhs = expr_stack.pop().?;
+        const op = expr_stack.pop().?;
+        lhs = expr_stack.pop().?;
 
         span_start = self.compiler.span_start.items[lhs];
         const span_end = self.compiler.span_end.items[rhs];

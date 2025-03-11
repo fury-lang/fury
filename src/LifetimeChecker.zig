@@ -96,7 +96,7 @@ pub fn checkBlockLifetime(self: *LifetimeChecker, block_id: Parser.BlockId, scop
         }
     }
 
-    _ = self.current_blocks.popOrNull();
+    _ = self.current_blocks.pop();
 }
 
 pub fn currentBlockMayAllocate(self: *LifetimeChecker, scope_level: usize, node_id: Parser.NodeId) !void {

@@ -51,9 +51,9 @@ pub fn build(b: *std.Build) void {
     coverage_step.dependOn(&run_integation_tests.step);
 }
 
-fn invokeGcc(step: *std.Build.Step, prog_node: std.Progress.Node) !void {
+fn invokeGcc(step: *std.Build.Step, make_options: std.Build.Step.MakeOptions) anyerror!void {
     _ = step;
-    _ = prog_node;
+    _ = make_options;
     const alloc = std.heap.page_allocator;
     const argv = [_][]const u8{
         "gcc",
@@ -66,9 +66,9 @@ fn invokeGcc(step: *std.Build.Step, prog_node: std.Progress.Node) !void {
     _ = try child.wait();
 }
 
-fn execOutput(step: *std.Build.Step, prog_node: std.Progress.Node) !void {
+fn execOutput(step: *std.Build.Step, make_options: std.Build.Step.MakeOptions) anyerror!void {
     _ = step;
-    _ = prog_node;
+    _ = make_options;
     const alloc = std.heap.page_allocator;
     const argv = [_][]const u8{
         "./output",

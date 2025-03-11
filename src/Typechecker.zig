@@ -1303,7 +1303,7 @@ pub fn typecheckBlock(self: *Typechecker, node_id: Parser.NodeId, block_id: Pars
 
     self.compiler.setNodeType(node_id, VOID_TYPE_ID);
 
-    return self.scope.pop();
+    return self.scope.pop().?;
 }
 
 pub fn typecheckNode(self: *Typechecker, node_id: Parser.NodeId, local_inferences: *std.ArrayList(TypeId)) anyerror!TypeId {
@@ -3231,7 +3231,7 @@ pub fn findModuleInScope(self: *Typechecker, namespace: Parser.NodeId) ?ModuleId
             const simple_path = module_entry.key_ptr.*[0 .. module_entry.key_ptr.len - 5];
             var path_copy: []const u8 = std.fmt.allocPrint(self.alloc, "{s}", .{simple_path}) catch unreachable;
             std.mem.reverse(u8, @constCast(path_copy));
-            var split_item = std.mem.split(u8, path_copy, "/");
+            var split_item = std.mem.splitSequence(u8, path_copy, "/");
             path_copy = split_item.first();
             std.mem.reverse(u8, @constCast(path_copy));
             if (std.mem.eql(u8, path_copy, name)) {
